@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import feedparser
 
 from app.models import TrendSignal
+from app.scanners.keyword_extraction import extract_keyword
 
 
 class RSSNewsScanner:
@@ -46,6 +47,7 @@ class RSSNewsScanner:
                             raw_score=max(10.0, 60.0 - float(index * 2)),
                             detected_at=detected_at,
                             metadata={
+                                "is_mock": False,
                                 "feed_url": feed_url,
                                 "published_at": self._entry_datetime(entry),
                             },
@@ -72,5 +74,4 @@ class RSSNewsScanner:
 
     @staticmethod
     def _keyword_from_title(title: str) -> str:
-        parts = title.replace(" - ", ": ").split(":")
-        return parts[0].strip()[:120] or title.strip()[:120]
+        return extract_keyword(title)

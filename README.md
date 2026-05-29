@@ -2,7 +2,11 @@
 
 ClipRadar is a trend scanner for finding rising topics, validating related YouTube videos, and ranking opportunity signals.
 
-MVP Scanner 0.1 collects trend signals from Google Trends and RSS news feeds, groups similar topics, validates the strongest opportunities against YouTube, and writes a ranked JSON report.
+MVP Scanner 0.2.1 collects trend signals from Google Trends, RSS news feeds, Google News RSS, and YouTube popular videos. It groups similar topics, validates the strongest opportunities against YouTube search, and writes a ranked JSON report.
+
+Google Trends can fail because the unofficial `pytrends` endpoint is unstable. When that happens, ClipRadar marks Google Trends fallback signals as mock data and penalizes them. The ranking now leans on alternative real sources, especially Google News RSS and YouTube popular videos.
+
+Version 0.2.1 adds `suitability_score`, a quality filter that reduces noise from music releases, loose artist names, generic terms, mock-only trends, and topics that are popular but not clearly useful for short-form explanatory content.
 
 ## Setup
 
@@ -33,7 +37,17 @@ YOUTUBE_API_KEY=
 APP_ENV=development
 ```
 
-`YOUTUBE_API_KEY` is optional for local smoke tests. Without it, ClipRadar still runs Google Trends and RSS collection, but skips YouTube video validation.
+`YOUTUBE_API_KEY` is optional for local smoke tests. Without it, ClipRadar still runs Google Trends, RSS, and Google News RSS collection, but skips YouTube popular videos and YouTube search validation.
+
+## Scanners
+
+ClipRadar MVP 0.2.1 uses:
+
+- `GoogleTrendsScanner`: tries Google Trends through `pytrends`; if it fails, emits explicitly marked mock fallback signals.
+- `RSSNewsScanner`: reads configured news RSS feeds and extracts compact keywords from titles.
+- `GoogleNewsRSSScanner`: searches Google News RSS for broad BR and global trend categories.
+- `YouTubePopularScanner`: reads popular YouTube videos by region and turns their titles into trend signals.
+- `YouTubeScanner`: validates top ranked topics by searching related videos.
 
 ## Run Scanner
 

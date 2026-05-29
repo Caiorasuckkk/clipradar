@@ -34,7 +34,7 @@ class GoogleTrendsScanner:
         self.limit = limit
 
     def scan(self) -> list[TrendSignal]:
-        keywords = self._fetch_trending_searches()
+        keywords, is_mock = self._fetch_trending_searches()
         detected_at = datetime.now(UTC)
 
         return [
@@ -45,14 +45,14 @@ class GoogleTrendsScanner:
                 url=None,
                 language=self.language,
                 market=self.market,
-                raw_score=max(10.0, 100.0 - float(index * 4)),
+                raw_score=self._raw_score(index=index, is_mock=is_mock),
                 detected_at=detected_at,
-                metadata={"rank": index + 1},
+                metadata={"rank": index + 1, "is_mock": is_mock},
             )
             for index, keyword in enumerate(keywords[: self.limit])
         ]
 
-    def _fetch_trending_searches(self) -> list[str]:
+    def _fetch_trending_searches(self) -> tuple[list[str], bool]:
         try:
             from pytrends.request import TrendReq
 
@@ -60,10 +60,22 @@ class GoogleTrendsScanner:
             frame = pytrends.trending_searches(pn=self._pn())
             if frame is None or frame.empty:
                 raise ValueError("pytrends returned no trending searches")
-            return [str(value).strip() for value in frame.iloc[:, 0].tolist() if str(value).strip()]
+            keywords = [
+                str(value).strip()
+                for value in frame.iloc[:, 0].tolist()
+                if str(value).strip()
+            ]
+            return keywords, False
         except Exception as exc:
             print(f"[google_trends] Falling back to mock trends for {self.market}: {exc}")
-            return self.FALLBACK_TRENDS.get(self.market, self.FALLBACK_TRENDS["GLOBAL"])
+            return self.FALLBACK_TRENDS.get(self.market, self.FALLBACK_TRENDS["GLOBAL"]), True
+
+    @staticmethod
+    def _raw_score(index: int, is_mock: bool) -> float:
+        score = max(10.0, 100.0 - float(index * 4))
+        if is_mock:
+            score *= 0.35
+        return round(score, 2)
 
     def _pn(self) -> str:
         if self.market == "BR":
