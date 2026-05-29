@@ -2,11 +2,13 @@
 
 ClipRadar is a trend scanner for finding rising topics, validating related YouTube videos, and ranking opportunity signals.
 
-MVP Scanner 0.2.1 collects trend signals from Google Trends, RSS news feeds, Google News RSS, and YouTube popular videos. It groups similar topics, validates the strongest opportunities against YouTube search, and writes a ranked JSON report.
+MVP Scanner 0.3 collects trend signals from Google Trends, RSS news feeds, Google News RSS, and YouTube popular videos. It groups similar topics, validates the strongest opportunities against YouTube search, writes a ranked JSON report, and generates a human-readable opportunity report for review.
 
 Google Trends can fail because the unofficial `pytrends` endpoint is unstable. When that happens, ClipRadar marks Google Trends fallback signals as mock data and penalizes them. The ranking now leans on alternative real sources, especially Google News RSS and YouTube popular videos.
 
-Version 0.2.1 adds `suitability_score`, a quality filter that reduces noise from music releases, loose artist names, generic terms, mock-only trends, and topics that are popular but not clearly useful for short-form explanatory content.
+Version 0.2.1 added `suitability_score`, a quality filter that reduces noise from music releases, loose artist names, generic terms, mock-only trends, and topics that are popular but not clearly useful for short-form explanatory content.
+
+Version 0.3 adds the Opportunity Report: Markdown and JSON files with the best `produce` and `review` topics, related videos, score rationale, and suggested short-video angles.
 
 ## Setup
 
@@ -41,7 +43,7 @@ APP_ENV=development
 
 ## Scanners
 
-ClipRadar MVP 0.2.1 uses:
+ClipRadar MVP 0.3 uses:
 
 - `GoogleTrendsScanner`: tries Google Trends through `pytrends`; if it fails, emits explicitly marked mock fallback signals.
 - `RSSNewsScanner`: reads configured news RSS feeds and extracts compact keywords from titles.
@@ -63,3 +65,12 @@ Results are saved to:
 ```text
 backend/app/storage/trends/results_YYYYMMDD_HHMM.json
 ```
+
+Opportunity reports are saved to:
+
+```text
+backend/app/storage/reports/opportunity_report_YYYYMMDD_HHMM.md
+backend/app/storage/reports/opportunity_report_YYYYMMDD_HHMM.json
+```
+
+These reports are intended for human review before any future transcription, clipping, or publishing workflow.

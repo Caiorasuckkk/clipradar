@@ -4,3 +4,5 @@ backend/.ven/
 **/__pycache__/
 **/*.pyc
 **/*.log
+backend/app/storage/reports/*.md
+backend/app/storage/reports/*.json

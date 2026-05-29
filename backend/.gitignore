@@ -8,6 +8,8 @@ __pycache__/
 app/storage/trends/*.json
 app/storage/videos/*
 app/storage/logs/*
+app/storage/reports/*.md
+app/storage/reports/*.json
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

@@ -9,12 +9,12 @@ from app.scanners.google_news_rss_scanner import GoogleNewsRSSScanner
 from app.scanners.google_trends_scanner import GoogleTrendsScanner
 from app.scanners.rss_news_scanner import RSSNewsScanner
 from app.scanners.youtube_popular_scanner import YouTubePopularScanner
-from app.services import SourceFinderService, TrendAggregatorService
+from app.services import OpportunityReportService, SourceFinderService, TrendAggregatorService
 
 
 def main() -> None:
     configure_output()
-    print("[clipradar] Starting MVP Scanner 0.2.1")
+    print("[clipradar] Starting MVP Scanner 0.3")
 
     signals = collect_signals()
     print(f"[clipradar] Collected {len(signals)} trend signals")
@@ -29,6 +29,12 @@ def main() -> None:
 
     output_path = save_results(topics)
     print(f"[clipradar] Saved results to {output_path}")
+
+    report_service = OpportunityReportService()
+    markdown_report_path, json_report_path = report_service.generate(topics, limit=10)
+    print(f"[clipradar] Saved opportunity report Markdown to {markdown_report_path}")
+    print(f"[clipradar] Saved opportunity report JSON to {json_report_path}")
+
     print_ranking(topics[:10])
 
 
@@ -95,7 +101,7 @@ def model_to_jsonable(model: TrendTopic) -> dict:
 
 def print_ranking(topics: list[TrendTopic]) -> None:
     print("")
-    print("ClipRadar MVP Scanner 0.2.1 - Top 10 Opportunities")
+    print("ClipRadar MVP Scanner 0.3 - Top 10 Opportunities")
     print("-" * 126)
     print(
         f"{'#':<3} {'keyword':<32} {'market':<8} {'lang':<8} "
