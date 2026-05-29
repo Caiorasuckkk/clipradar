@@ -1,0 +1,7 @@
+python-dotenv
+requests
+feedparser
+pytrends
+google-api-python-client
+pydantic
+isodate

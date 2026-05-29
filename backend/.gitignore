@@ -1,0 +1,13 @@
+.env
+.venv/
+.ven/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+app/storage/trends/*.json
+app/storage/videos/*
+app/storage/logs/*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
