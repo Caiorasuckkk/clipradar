@@ -4,29 +4,74 @@ from math import log10
 import isodate
 from googleapiclient.discovery import build
 
-from app.config import YOUTUBE_API_KEY
+from app.config import YOUTUBE_API_KEYS_LIST
 from app.models import SourceVideo
+from app.scanners import youtube_errors
+from app.scanners.youtube_errors import (
+    is_quota_error,
+    KeyRotationManager,
+    mark_quota_exhausted,
+    record_rotation_event,
+    sanitize_youtube_error,
+)
 
 
 class YouTubeScanner:
+    # TODO: avaliar fallback via SerpAPI/SearchAPI quando YouTube quota esgotar.
+    # Verificar limite gratuito atual antes de implementar.
+    # SERPAPI_KEY= no .env
+    # Não implementar agora.
     def __init__(self, api_key: str | None = None, max_results: int = 5) -> None:
-        self.api_key = api_key if api_key is not None else YOUTUBE_API_KEY
+        keys = [api_key] if api_key else YOUTUBE_API_KEYS_LIST
+        self.key_manager = KeyRotationManager([key for key in keys if key])
         self.max_results = max_results
+        self.quota_exhausted = False
 
     def search_videos(self, keyword: str) -> list[SourceVideo]:
-        if not self.api_key:
+        if self.quota_exhausted or youtube_errors.QUOTA_EXHAUSTED:
+            return []
+        if not self.key_manager.current_key():
             print("[youtube] YOUTUBE_API_KEY is missing. Skipping YouTube validation.")
             return []
 
-        try:
-            youtube = build("youtube", "v3", developerKey=self.api_key)
-            video_ids = self._search_video_ids(youtube, keyword)
-            if not video_ids:
+        while self.key_manager.current_key():
+            try:
+                youtube = build(
+                    "youtube",
+                    "v3",
+                    developerKey=self.key_manager.current_key(),
+                )
+                video_ids = self._search_video_ids(youtube, keyword)
+                if not video_ids:
+                    return []
+                return self._fetch_video_details(youtube, video_ids)
+            except Exception as exc:
+                if is_quota_error(exc):
+                    if self._rotate_key():
+                        continue
+                    self.quota_exhausted = True
+                    mark_quota_exhausted()
+                    print("[youtube] YouTube quota exhausted. Skipping remaining video validation.")
+                else:
+                    print(
+                        f"[youtube] Failed to search videos for '{keyword}': "
+                        f"{sanitize_youtube_error(exc)}"
+                    )
                 return []
-            return self._fetch_video_details(youtube, video_ids)
-        except Exception as exc:
-            print(f"[youtube] Failed to search videos for '{keyword}': {exc}")
-            return []
+        return []
+
+    def _rotate_key(self) -> bool:
+        current = self.key_manager.current_index
+        total = self.key_manager.total
+        if self.key_manager.rotate():
+            message = f"quota esgotada (key {current}/{total}); rotacionou para key {self.key_manager.current_index}"
+            record_rotation_event(message, True)
+            print(f"[youtube] {message}")
+            return True
+
+        message = f"quota esgotada (key {current}/{total}); todas as keys esgotadas"
+        record_rotation_event(message, False)
+        return False
 
     def _search_video_ids(self, youtube: object, keyword: str) -> list[str]:
         response = (
@@ -51,7 +96,7 @@ class YouTubeScanner:
         response = (
             youtube.videos()
             .list(
-                part="snippet,statistics,contentDetails",
+                part="snippet,statistics,contentDetails,status",
                 id=",".join(video_ids),
             )
             .execute()
@@ -62,6 +107,7 @@ class YouTubeScanner:
             snippet = item.get("snippet", {})
             statistics = item.get("statistics", {})
             details = item.get("contentDetails", {})
+            status = item.get("status", {})
             video_id = item.get("id", "")
             published_at = self._parse_datetime(snippet.get("publishedAt"))
             view_count = self._to_int(statistics.get("viewCount"))
@@ -85,6 +131,7 @@ class YouTubeScanner:
                         comment_count=comment_count,
                         published_at=published_at,
                     ),
+                    license=status.get("license"),
                 )
             )
 

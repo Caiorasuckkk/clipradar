@@ -58,6 +58,17 @@ class ContentSuitabilityService:
         "viral",
     }
 
+    BAD_ENDINGS = {
+        "art",
+        "made",
+        "new",
+        "news",
+        "novo",
+        "nova",
+        "see",
+        "watch",
+    }
+
     def score_topic(self, topic: TrendTopic) -> float:
         keyword = topic.normalized_keyword or topic.keyword.lower()
         text = self._topic_text(topic)
@@ -77,7 +88,11 @@ class ContentSuitabilityService:
             score += 1.5
         if topic.videos:
             score += 0.8
-        if "google_news" in topic.real_sources and "youtube_popular" in topic.real_sources:
+        if topic.attention_score >= 7:
+            score += 0.8
+        elif topic.attention_score >= 5:
+            score += 0.4
+        if "trends_rss" in topic.real_sources and "youtube_popular" in topic.real_sources:
             score += 1.0
         if self._looks_like_curiosity(keyword):
             score += 0.8
@@ -90,6 +105,14 @@ class ContentSuitabilityService:
             score -= 2.0
         if keyword in self.GENERIC_TERMS:
             score -= 2.5
+        if self._looks_cut_or_weak(keyword):
+            score -= 2.5
+        if words_count < 2:
+            score -= 2.0
+        if words_count > 7:
+            score -= 2.0
+        if self._low_readability(keyword):
+            score -= 1.5
         if topic.sources == ["youtube_popular"]:
             score -= 4.0
         if topic.real_signals_count == 0:
@@ -124,7 +147,7 @@ class ContentSuitabilityService:
         words = topic.normalized_keyword.split()
         if len(words) not in {2, 3}:
             return False
-        has_context_source = any(source in topic.real_sources for source in ["google_news", "rss_news"])
+        has_context_source = any(source in topic.real_sources for source in ["trends_rss", "rss_news"])
         title_case_name = all(word[:1].isalpha() for word in words)
         return title_case_name and topic.sources == ["youtube_popular"] and not has_context_source
 
@@ -151,3 +174,24 @@ class ContentSuitabilityService:
     @staticmethod
     def _looks_like_curiosity(keyword: str) -> bool:
         return any(term in keyword for term in ["como", "por que", "why", "how", "explained"])
+
+    def _looks_cut_or_weak(self, keyword: str) -> bool:
+        words = keyword.split()
+        if not words:
+            return True
+        if words[-1] in self.BAD_ENDINGS:
+            return True
+        if len(words[-1]) <= 2:
+            return True
+        if len(words) >= 4 and not self._has_news_context(keyword) and not self._has_any(keyword, self.POSITIVE_TERMS):
+            return True
+        return False
+
+    @staticmethod
+    def _low_readability(keyword: str) -> bool:
+        words = keyword.split()
+        if not words:
+            return True
+        short_words = sum(1 for word in words if len(word) <= 3)
+        repeated_ratio = len(set(words)) / max(1, len(words))
+        return short_words >= max(2, len(words) // 2) or repeated_ratio < 0.75

@@ -14,3 +14,7 @@ class SourceVideo(BaseModel):
     comment_count: int
     duration_seconds: int
     engagement_score: float
+    license: str | None = None
+    clip_permission_status: str = "unknown"
+    clip_permission_score: float = 0.0
+    clip_permission_notes: list[str] = []

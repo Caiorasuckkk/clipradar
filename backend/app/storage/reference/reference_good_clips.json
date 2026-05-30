@@ -1,0 +1,86 @@
+[
+  {
+    "url": "https://www.youtube.com/shorts/K8lDjkwrRQY",
+    "label": "good",
+    "source": "user_reference",
+    "style": "podcast_cut",
+    "notes": "Referência de bom corte",
+    "features": {
+      "strong_hook": true,
+      "clear_context": true,
+      "complete_thought": true,
+      "good_pacing": true,
+      "no_filler": null,
+      "clear_ending": true,
+      "viral_potential": 5,
+      "story_or_argument_progression": null,
+      "no_merchandising": null,
+      "no_superchat": null,
+      "works_standalone": null,
+      "emotional_or_curiosity_trigger": null
+    }
+  },
+  {
+    "url": "https://www.youtube.com/shorts/Uub2S5-BL8w",
+    "label": "good",
+    "source": "user_reference",
+    "style": "podcast_cut",
+    "notes": "Bom ritmo, contexto rápido e fechamento claro",
+    "features": {
+      "strong_hook": true,
+      "clear_context": true,
+      "complete_thought": true,
+      "good_pacing": true,
+      "no_filler": true,
+      "clear_ending": true,
+      "viral_potential": 5,
+      "story_or_argument_progression": null,
+      "no_merchandising": null,
+      "no_superchat": null,
+      "works_standalone": null,
+      "emotional_or_curiosity_trigger": null
+    }
+  },
+  {
+    "url": "https://www.youtube.com/shorts/7WYf8oOBoLY",
+    "label": "good",
+    "source": "user_reference",
+    "style": "podcast_cut",
+    "notes": "Bom ritmo, contexto rápido e fechamento claro",
+    "features": {
+      "strong_hook": true,
+      "clear_context": true,
+      "complete_thought": true,
+      "good_pacing": true,
+      "no_filler": true,
+      "clear_ending": true,
+      "viral_potential": 5,
+      "story_or_argument_progression": null,
+      "no_merchandising": null,
+      "no_superchat": null,
+      "works_standalone": null,
+      "emotional_or_curiosity_trigger": null
+    }
+  },
+  {
+    "url": "https://www.youtube.com/shorts/x6czTV0NDeg",
+    "label": "good",
+    "source": "user_reference",
+    "style": "podcast_cut",
+    "notes": "Bom ritmo, contexto rápido e fechamento claro",
+    "features": {
+      "strong_hook": true,
+      "clear_context": true,
+      "complete_thought": true,
+      "good_pacing": true,
+      "no_filler": true,
+      "clear_ending": true,
+      "viral_potential": 5,
+      "story_or_argument_progression": null,
+      "no_merchandising": null,
+      "no_superchat": null,
+      "works_standalone": null,
+      "emotional_or_curiosity_trigger": null
+    }
+  }
+]

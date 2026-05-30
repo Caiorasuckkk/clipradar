@@ -2,9 +2,17 @@ from datetime import UTC, datetime
 
 from googleapiclient.discovery import build
 
-from app.config import YOUTUBE_API_KEY
+from app.config import YOUTUBE_API_KEYS_LIST
 from app.models import TrendSignal
+from app.scanners import youtube_errors
 from app.scanners.keyword_extraction import extract_keyword
+from app.scanners.youtube_errors import (
+    is_quota_error,
+    KeyRotationManager,
+    mark_quota_exhausted,
+    record_rotation_event,
+    sanitize_youtube_error,
+)
 
 
 class YouTubePopularScanner:
@@ -17,29 +25,48 @@ class YouTubePopularScanner:
     ) -> None:
         self.market = market.upper()
         self.language = language
-        self.api_key = api_key if api_key is not None else YOUTUBE_API_KEY
+        keys = [api_key] if api_key else YOUTUBE_API_KEYS_LIST
+        self.key_manager = KeyRotationManager([key for key in keys if key])
         self.max_results = max_results
 
     def scan(self) -> list[TrendSignal]:
-        if not self.api_key:
+        if youtube_errors.QUOTA_EXHAUSTED:
+            print("[youtube_popular] YouTube quota already exhausted. Skipping popular videos.")
+            return []
+        if not self.key_manager.current_key():
             print("[youtube_popular] YOUTUBE_API_KEY is missing. Skipping popular videos.")
             return []
 
-        try:
-            youtube = build("youtube", "v3", developerKey=self.api_key)
-            response = (
-                youtube.videos()
-                .list(
-                    part="snippet,statistics",
-                    chart="mostPopular",
-                    regionCode=self._region_code(),
-                    maxResults=self.max_results,
+        while self.key_manager.current_key():
+            try:
+                youtube = build(
+                    "youtube",
+                    "v3",
+                    developerKey=self.key_manager.current_key(),
                 )
-                .execute()
-            )
-        except Exception as exc:
-            print(f"[youtube_popular] Failed to fetch popular videos for {self.market}: {exc}")
-            return []
+                response = (
+                    youtube.videos()
+                    .list(
+                        part="snippet,statistics,status",
+                        chart="mostPopular",
+                        regionCode=self._region_code(),
+                        maxResults=self.max_results,
+                    )
+                    .execute()
+                )
+                break
+            except Exception as exc:
+                if is_quota_error(exc):
+                    if self._rotate_key():
+                        continue
+                    mark_quota_exhausted()
+                    print(f"[youtube_popular] YouTube quota exhausted for {self.market}.")
+                else:
+                    print(
+                        f"[youtube_popular] Failed to fetch popular videos for {self.market}: "
+                        f"{sanitize_youtube_error(exc)}"
+                    )
+                return []
 
         detected_at = datetime.now(UTC)
         signals: list[TrendSignal] = []
@@ -82,6 +109,19 @@ class YouTubePopularScanner:
         rank_score = max(20.0, 90.0 - float(index * 2))
         view_bonus = min(10.0, views / 500_000)
         return round(min(100.0, rank_score + view_bonus), 2)
+
+    def _rotate_key(self) -> bool:
+        current = self.key_manager.current_index
+        total = self.key_manager.total
+        if self.key_manager.rotate():
+            message = f"quota esgotada (key {current}/{total}); rotacionou para key {self.key_manager.current_index}"
+            record_rotation_event(message, True)
+            print(f"[youtube_popular] {message}")
+            return True
+
+        message = f"quota esgotada (key {current}/{total}); todas as keys esgotadas"
+        record_rotation_event(message, False)
+        return False
 
     @staticmethod
     def _to_int(value: object) -> int:

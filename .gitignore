@@ -6,3 +6,15 @@ backend/.ven/
 **/*.log
 backend/app/storage/reports/*.md
 backend/app/storage/reports/*.json
+backend/app/storage/reports/feedback_dataset_*.json
+backend/app/storage/reports/feedback_dataset_*.md
+backend/app/storage/cache/*.json
+backend/app/storage/cache/**/*.json
+backend/app/storage/cache/yt_trending_debug.html
+backend/app/storage/cache/ffmpeg/*
+backend/app/storage/downloads/*
+backend/app/storage/transcripts/*
+backend/app/storage/transcripts/*.json
+backend/app/storage/clips/*
+backend/app/storage/clips/*.json
+backend/app/storage/videos/*

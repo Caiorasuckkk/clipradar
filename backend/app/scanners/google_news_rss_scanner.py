@@ -1,32 +1,15 @@
 from datetime import UTC, datetime
-from urllib.parse import quote_plus
+import xml.etree.ElementTree as ET
 
-import feedparser
+import requests
 
 from app.models import TrendSignal
-from app.scanners.keyword_extraction import extract_keyword
+from app.scanners.trend_query_builder import _br_relevance_score
 
 
 class GoogleNewsRSSScanner:
-    BR_QUERIES = [
-        "Brasil",
-        "tecnologia",
-        "inteligência artificial",
-        "futebol",
-        "economia",
-        "entretenimento",
-        "viral",
-    ]
-
-    GLOBAL_QUERIES = [
-        "technology",
-        "artificial intelligence",
-        "business",
-        "creator economy",
-        "viral",
-        "entertainment",
-        "global news",
-    ]
+    BR_SUFFIXES = ["podcast", "escândalo", "investigação", "polêmica", "caso", "revelou"]
+    GLOBAL_SUFFIXES = ["podcast", "scandal", "investigation", "files", "exposed", "lawsuit"]
 
     def __init__(
         self,
@@ -41,57 +24,60 @@ class GoogleNewsRSSScanner:
     def scan(self) -> list[TrendSignal]:
         signals: list[TrendSignal] = []
         detected_at = datetime.now(UTC)
+        url = self._rss_url()
 
-        for query in self._queries():
-            url = self._rss_url(query)
-            try:
-                feed = feedparser.parse(url)
-                if getattr(feed, "bozo", False):
-                    print(f"[google_news] Warning while parsing {query}: {feed.bozo_exception}")
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            feed = ET.fromstring(response.content)
+            items = feed.findall(".//item/title")
+            terms = [item.text.strip() for item in items if item.text and item.text.strip()]
+            if self.market == "BR":
+                strong_terms = [term for term in terms if _br_relevance_score(term) >= 0.45]
+                auxiliary_terms = [
+                    term for term in terms if 0.25 <= _br_relevance_score(term) < 0.45
+                ]
+                terms = strong_terms + auxiliary_terms
 
-                entries = getattr(feed, "entries", [])[: self.max_items_per_query]
-                for index, entry in enumerate(entries):
-                    title = self._entry_value(entry, "title")
-                    if not title:
-                        continue
-
-                    signals.append(
-                        TrendSignal(
-                            source="google_news",
-                            keyword=extract_keyword(title),
-                            title=title,
-                            url=self._entry_value(entry, "link"),
-                            language=self.language,
-                            market=self.market,
-                            raw_score=max(20.0, 85.0 - float(index * 3)),
-                            detected_at=detected_at,
-                            metadata={
-                                "is_mock": False,
-                                "query": query,
-                                "rss_url": url,
-                            },
-                        )
+            for index, query in enumerate(self._ranked_queries(terms[:6])):
+                signals.append(
+                    TrendSignal(
+                        source="trends_rss",
+                        keyword=query["query"],
+                        title=query["term"],
+                        url=url,
+                        language=self.language,
+                        market=self.market,
+                        raw_score=max(35.0, 90.0 - float(index * 3)),
+                        detected_at=detected_at,
+                        metadata={
+                            "is_mock": False,
+                            "term": query["term"],
+                            "suffix": query["suffix"],
+                            "rss_url": url,
+                        },
                     )
-            except Exception as exc:
-                print(f"[google_news] Failed to scan query '{query}': {exc}")
+                )
+        except Exception as exc:
+            print(f"[trends_rss] Failed to scan {self.market}: {exc}")
 
         return signals
 
-    def _queries(self) -> list[str]:
-        return self.BR_QUERIES if self.market == "BR" else self.GLOBAL_QUERIES
-
-    def _rss_url(self, query: str) -> str:
+    def _rss_url(self) -> str:
         if self.market == "BR":
-            return (
-                "https://news.google.com/rss/search?"
-                f"q={quote_plus(query)}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
-            )
-        return (
-            "https://news.google.com/rss/search?"
-            f"q={quote_plus(query)}&hl=en-US&gl=US&ceid=US:en"
-        )
+            return "https://trends.google.com/trending/rss?geo=BR&hl=pt-BR"
+        return "https://trends.google.com/trending/rss?geo=US&hl=en-US"
 
-    @staticmethod
-    def _entry_value(entry: object, key: str) -> str | None:
-        value = getattr(entry, key, None)
-        return str(value).strip() if value else None
+    def _ranked_queries(self, terms: list[str]) -> list[dict[str, str]]:
+        suffixes = self.BR_SUFFIXES if self.market == "BR" else self.GLOBAL_SUFFIXES
+        candidates: list[dict[str, str]] = []
+        for term in terms:
+            for suffix in suffixes[:2]:
+                candidates.append(
+                    {
+                        "term": term,
+                        "suffix": suffix,
+                        "query": f"{term} {suffix}",
+                    }
+                )
+        return sorted(candidates, key=lambda item: len(item["query"]), reverse=True)[:6]

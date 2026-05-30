@@ -17,6 +17,31 @@ PUBLISHERS = {
     "uol",
 }
 
+LEADING_GENERIC_WORDS = {
+    "aponta",
+    "confira",
+    "entenda",
+    "how",
+    "mostra",
+    "new",
+    "nova",
+    "novo",
+    "saiba",
+    "see",
+    "veja",
+    "watch",
+    "what",
+    "why",
+}
+
+ENDING_GENERIC_WORDS = LEADING_GENERIC_WORDS | {
+    "art",
+    "made",
+    "news",
+    "sobre",
+    "with",
+}
+
 STOPWORDS = {
     "a",
     "about",
@@ -69,8 +94,10 @@ STOPWORDS = {
 
 def extract_keyword(title: str, max_words: int = 4) -> str:
     cleaned_title = _remove_publisher_suffix(title)
+    cleaned_title = _remove_long_subtitle(cleaned_title)
     cleaned_title = _remove_excess_non_latin(cleaned_title)
     words = _candidate_words(cleaned_title)
+    words = _remove_edge_generic_words(words)
     if _use_fallback(cleaned_title, words):
         return _trim_to_words(words, max_words=max_words)
 
@@ -96,8 +123,18 @@ def _remove_publisher_suffix(title: str) -> str:
     return re.sub(publisher_pattern, "", cleaned, flags=re.IGNORECASE).strip()
 
 
+def _remove_long_subtitle(title: str) -> str:
+    if ":" not in title:
+        return title
+    before, after = [part.strip() for part in title.split(":", 1)]
+    if len(after.split()) > 6 or len(before.split()) >= 2:
+        return before
+    return title
+
+
 def _remove_excess_non_latin(text: str) -> str:
-    text = re.sub(r"[^\w\sÀ-ÿ.,:;!?%$€£@#&'\"()/+-]", " ", text, flags=re.UNICODE)
+    text = text.replace('"', " ").replace("'", " ").replace("“", " ").replace("”", " ")
+    text = re.sub(r"[^\w\sÀ-ÿ.,:;!?%$€£@#&()/+-]", " ", text, flags=re.UNICODE)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -110,6 +147,15 @@ def _candidate_words(text: str) -> list[str]:
         for word in normalized.split()
         if len(word) > 2 and word not in STOPWORDS and not word.isnumeric()
     ]
+
+
+def _remove_edge_generic_words(words: list[str]) -> list[str]:
+    cleaned = list(words)
+    while cleaned and cleaned[0] in LEADING_GENERIC_WORDS:
+        cleaned.pop(0)
+    while cleaned and cleaned[-1] in ENDING_GENERIC_WORDS:
+        cleaned.pop()
+    return cleaned
 
 
 def _use_fallback(cleaned_title: str, words: list[str]) -> bool:
@@ -128,12 +174,14 @@ def _trim_to_words(words: list[str], max_words: int) -> str:
 
 
 def _clean_final_keyword(keyword: str) -> str:
-    keyword = re.sub(r"\s+", " ", keyword).strip(" -|—–.,:;")
+    keyword = re.sub(r"\s+", " ", keyword).strip(" -|—–.,:;\"'")
     words = keyword.split()
+    words = _remove_edge_generic_words(words)
     if len("".join(words)) < 3:
         return ""
     if len(words) > 6:
-        keyword = " ".join(words[:6])
+        words = words[:6]
+    keyword = " ".join(words)
     return keyword[:120].rsplit(" ", 1)[0] if len(keyword) > 120 and " " in keyword else keyword
 
 
