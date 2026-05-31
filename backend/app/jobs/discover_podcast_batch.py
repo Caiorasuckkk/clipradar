@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import argparse
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from math import log10
@@ -89,7 +90,7 @@ LOW_QUALITY_REJECT_TERMS = {
 
 GAME_REJECT_TERMS = {
     "gameplay", "walkthrough", "modern warfare", "call of duty", "mw2",
-    "mw4", "unreal engine", "ign", "games on", "first games",
+    "mw4", "unreal engine", "ign", "games on", "first games", "game",
 }
 
 MUSIC_REJECT_TERMS = {
@@ -101,6 +102,8 @@ MUSIC_REJECT_TERMS = {
 SHORTS_REJECT_TERMS = {
     "#shorts", "shorts", "shortvideo", "shorts podcast",
 }
+
+REACT_REJECT_TERMS = {"react:", "react", "reação", "reacao", "reacts"}
 
 PODCAST_STRONG_TERMS = {
     "flow", "podpah", "inteligência ltda", "inteligencia ltda",
@@ -128,11 +131,16 @@ PODCAST_INTENT_TERMS = {
 
 def main() -> None:
     configure_output()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force-discovery", action="store_true")
+    args = parser.parse_args()
+
     if not config.PODCAST_DISCOVERY_ENABLED:
         print("PODCAST DISCOVERY desativado por config.")
         return
 
     history = VideoHistoryService()
+    history_data = history._read()
     priority = ProcessingPriorityService()
     key_manager = KeyRotationManager(config.YOUTUBE_API_KEYS_LIST)
     if not key_manager.current_key():
@@ -162,14 +170,41 @@ def main() -> None:
             if youtube_errors.QUOTA_EXHAUSTED:
                 break
         for video in videos:
+            block_reason = _discovery_block_reason(
+                video["video_id"],
+                video,
+                history_data,
+                force=args.force_discovery,
+            )
+            if block_reason:
+                rejected.append({**video, "reason": block_reason})
+                continue
             found.setdefault(video["video_id"], video)
 
-    selected, rejected_by_selection = _select_diverse_videos(list(found.values()), priority)
+    selected, rejected_by_selection = _select_diverse_videos(
+        list(found.values()),
+        priority,
+        history_data,
+        force=args.force_discovery,
+    )
     rejected.extend(rejected_by_selection)
 
     enqueued: list[dict[str, Any]] = []
     skipped_existing = 0
     for item in selected:
+        block_reason = _discovery_block_reason(
+            item["video_id"],
+            item,
+            history._read(),
+            force=args.force_discovery,
+        )
+        if block_reason:
+            rejected.append({**item, "reason": block_reason})
+            skipped_existing += 1
+            continue
+        if item.get("editorial_fit_score", 0) <= 0 or item.get("combined_discovery_score", 0) <= 0:
+            rejected.append({**item, "reason": "score editorial/discovery zerado"})
+            continue
         source_video = SourceVideo(**item["source_video"])
         was_enqueued = history.enqueue_video(source_video, None)
         if was_enqueued:
@@ -330,6 +365,8 @@ def _fetch_details(
 def _select_diverse_videos(
     videos: list[dict[str, Any]],
     priority: ProcessingPriorityService,
+    history_data: dict[str, dict[str, Any]],
+    force: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rejected: list[dict[str, Any]] = []
     for video in videos:
@@ -364,6 +401,21 @@ def _select_diverse_videos(
     per_market: dict[str, int] = defaultdict(int)
     per_bucket: dict[str, int] = defaultdict(int)
     for video in videos:
+        block_reason = _discovery_block_reason(
+            video["video_id"],
+            video,
+            history_data,
+            force=force,
+        )
+        if block_reason:
+            rejected.append({**video, "reason": block_reason})
+            continue
+        if video["editorial_fit_score"] <= 0:
+            rejected.append({**video, "reason": "editorial_fit_score zerado"})
+            continue
+        if video["combined_discovery_score"] <= 0:
+            rejected.append({**video, "reason": "combined_discovery_score zerado"})
+            continue
         if len(selected) >= config.PODCAST_DISCOVERY_MAX_RESULTS:
             rejected.extend(
                 {**item, "reason": "limite maximo do batch"} for item in videos[videos.index(video):]
@@ -503,10 +555,44 @@ def _reject_reason(title: str, channel_title: str, duration_seconds: int) -> str
     for term in LOW_QUALITY_REJECT_TERMS:
         if term in text:
             return f"local/institucional rejeitado: {term}"
-    if "react" in text and not _has_strong_podcast_signal(text):
-        return "react/reação rejeitado"
+    for term in REACT_REJECT_TERMS:
+        if term in text:
+            return f"react/reação rejeitado: {term}"
     if not any(term in text for term in PODCAST_INTENT_TERMS):
         return "não parece podcast/entrevista"
+    return ""
+
+
+def _discovery_block_reason(
+    video_id: str,
+    video: dict[str, Any],
+    history_data: dict[str, dict[str, Any]],
+    force: bool = False,
+) -> str:
+    if force:
+        return ""
+    record = history_data.get(video_id, {})
+    status = str(record.get("status") or "")
+    blocked_statuses = {
+        "done", "processed", "source_rejected", "weak_source_reviewed",
+        "bad_source", "processing",
+    }
+    if status in blocked_statuses:
+        return f"histórico bloqueado: status={status}"
+    if status == "needs_manual_review" and record.get("should_continue_video_review") is False:
+        return "histórico bloqueado: needs_manual_review sem continuar revisão"
+    if record.get("source_quality_tier") == "bad_source":
+        return "histórico bloqueado: bad_source"
+    if record.get("should_continue_video_review") is False:
+        return "histórico bloqueado: should_continue_video_review=false"
+    if (config.STORAGE_TRANSCRIPTS_DIR / f"{video_id}.json").exists():
+        return "já possui transcript local"
+    if (config.STORAGE_CLIPS_DIR / f"{video_id}_clips.json").exists():
+        return "já possui clips local"
+    if float(video.get("editorial_fit_score") or 1.0) <= 0:
+        return "editorial_fit_score zerado"
+    if float(video.get("combined_discovery_score") or 1.0) <= 0:
+        return "combined_discovery_score zerado"
     return ""
 
 

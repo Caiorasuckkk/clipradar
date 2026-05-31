@@ -30,7 +30,15 @@ class VideoHistoryService:
         data = self._read()
         video_id = video.video_id
         existing = data.get(video_id)
-        if existing and existing.get("status") in {"queued", "processing", "done"}:
+        blocked_statuses = {
+            "queued", "processing", "done", "processed", "source_rejected",
+            "weak_source_reviewed", "bad_source",
+        }
+        if existing and existing.get("status") in blocked_statuses:
+            return False
+        if existing and existing.get("source_quality_tier") == "bad_source":
+            return False
+        if existing and existing.get("should_continue_video_review") is False:
             return False
 
         now = self._now()
