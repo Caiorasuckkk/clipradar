@@ -30,6 +30,26 @@ def main() -> None:
             f"avg_rating={calibration.average_rating_by_reason.get(reason)}"
         )
     print("")
+    print("Duplicate reasons:")
+    for reason in calibration.duplicate_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
+    print("Low engagement reasons:")
+    for reason in calibration.low_engagement_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
+    print("Strong positive reasons:")
+    for reason in calibration.strong_positive_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
+    print("Positive adjustment reasons:")
+    for reason in calibration.positive_adjustment_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
+    print("Incomplete ending reasons:")
+    for reason in calibration.incomplete_ending_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
     print("Reasons de ajuste:")
     for reason in calibration.needs_adjustment_reasons:
         print(

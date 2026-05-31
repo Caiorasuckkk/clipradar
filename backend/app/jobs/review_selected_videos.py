@@ -13,7 +13,11 @@ def main() -> None:
     data = history._read()
     videos = sorted(
         data.values(),
-        key=lambda item: float(item.get("processing_priority_score") or 0.0),
+        key=lambda item: (
+            float(item.get("combined_discovery_score") or 0.0),
+            float(item.get("editorial_fit_score") or 0.0),
+            float(item.get("processing_priority_score") or 0.0),
+        ),
         reverse=True,
     )
 
@@ -23,11 +27,18 @@ def main() -> None:
     for index, video in enumerate(videos[:30], start=1):
         print(
             f"{index:>2}. {float(video.get('processing_priority_score') or 0):>4.1f} | "
+            f"editorial {float(video.get('editorial_fit_score') or 0):>4.1f} | "
+            f"combined {float(video.get('combined_discovery_score') or 0):>4.1f} | "
             f"{video.get('status', ''):<15} | "
             f"{int(video.get('duration_seconds') or 0):>5}s | "
             f"{_display(video.get('channel_name') or video.get('channel_title') or '', 22):<22} | "
             f"{_display(video.get('title', ''), 58)}"
         )
+        print(f"    video_id: {video.get('video_id', '')} | url: {video.get('url', '')}")
+        if video.get("topic_bucket"):
+            print(f"    bucket: {video.get('topic_bucket')}")
+        if video.get("editorial_fit_reasons"):
+            print(f"    editorial: {_display(', '.join(video.get('editorial_fit_reasons', [])), 140)}")
         print(f"    priority: {_display(video.get('processing_priority_reason', ''), 120)}")
         if video.get("queue_reject_reason"):
             print(f"    queue_reject: {_display(video.get('queue_reject_reason', ''), 120)}")

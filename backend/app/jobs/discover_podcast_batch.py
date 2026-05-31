@@ -36,7 +36,35 @@ BR_QUERIES = [
     "Jota Jota Podcast entrevista",
     "The Noite entrevista",
     "Programa do João entrevista",
-    "cortes podcast convidado famoso",
+    "RedCast podcast entrevista",
+    "RedCast convidado famoso",
+    "Ciência Sem Fim podcast entrevista",
+    "Os Sócios Podcast entrevista",
+    "Cara a Tapa entrevista",
+    "Cortes podcast convidado famoso",
+    "Podcast convidado famoso polêmica",
+    "Podcast história engraçada famoso",
+    "Podcast bastidores famoso",
+    "Entrevista famoso podcast Brasil",
+    "Futebol podcast polêmica",
+    "Jogador entrevista podcast",
+    "Ex jogador entrevista podcast",
+]
+
+BR_TREND_QUERIES = [
+    "Neymar polêmica podcast",
+    "Neymar bastidores entrevista",
+    "Neymar Copa do Mundo podcast",
+    "Copa do Mundo bastidores podcast",
+    "Copa do Mundo polêmica futebol podcast",
+    "seleção brasileira bastidores podcast",
+    "futebol brasileiro polêmica podcast",
+    "jogador famoso entrevista podcast",
+    "ex jogador entrevista podcast polêmica",
+    "Raiam Santos polêmica podcast",
+    "Raiam Santos entrevista podcast",
+    "Ruyter polêmica podcast",
+    "Ruyter entrevista podcast",
 ]
 
 GLOBAL_QUERIES = [
@@ -51,10 +79,50 @@ GLOBAL_QUERIES = [
     "Diary of a CEO interview",
 ]
 
-REJECT_TERMS = {
-    "#shorts", "shorts", "shortvideo", "official video", "music video",
-    "lyrics", "trailer", "teaser", "clipe oficial", "música", "musica",
-    "videoclipe",
+LOW_QUALITY_REJECT_TERMS = {
+    "unimed", "rádio jota", "radio jota", "rádio carbo", "radio carbo",
+    "arapuan verdade", "entrevista dr.", "entrevista doutor", "dr. ",
+    "dra. ", "programa local", "prefeitura", "câmara municipal",
+    "camara municipal", "assembleia legislativa", "institucional",
+    "palestra institucional", "audiência pública", "audiencia publica",
+}
+
+GAME_REJECT_TERMS = {
+    "gameplay", "walkthrough", "modern warfare", "call of duty", "mw2",
+    "mw4", "unreal engine", "ign", "games on", "first games",
+}
+
+MUSIC_REJECT_TERMS = {
+    "official video", "music video", "lyrics", "trailer", "teaser",
+    "clipe oficial", "música", "musica", "videoclipe", "lemonade",
+    "feat.", "ft.",
+}
+
+SHORTS_REJECT_TERMS = {
+    "#shorts", "shorts", "shortvideo", "shorts podcast",
+}
+
+PODCAST_STRONG_TERMS = {
+    "flow", "podpah", "inteligência ltda", "inteligencia ltda",
+    "ticaracaticast", "venus", "vênus", "papo de elite", "à deriva",
+    "a deriva", "primocast", "redcast", "the noite", "programa do joão",
+    "programa do joao", "ciência sem fim", "ciencia sem fim", "os sócios",
+    "os socios", "cara a tapa", "joe rogan", "theo von", "lex fridman",
+    "piers morgan", "hot ones", "club shay shay",
+}
+
+EDITORIAL_POSITIVE_TERMS = {
+    "entrevista", "polêmica", "polemica", "bastidores", "famoso",
+    "jogador", "ex jogador", "neymar", "copa do mundo", "raiam",
+    "ruyter", "monark", "vilela", "joão kléber", "joao kleber",
+    "história", "historia", "engraçada", "engracada", "humor",
+    "revelou", "conversa", "podcast", "interview", "controversy",
+    "backstage", "revealed",
+}
+
+PODCAST_INTENT_TERMS = {
+    "podcast", "entrevista", "interview", "show", "cast", "conversa",
+    "cortes", "corte",
 }
 
 
@@ -75,6 +143,7 @@ def main() -> None:
     queries: list[tuple[str, str]] = []
     if "BR" in markets:
         queries.extend(("BR", query) for query in BR_QUERIES)
+        queries.extend(("BR", query) for query in BR_TREND_QUERIES)
     if "GLOBAL" in markets:
         queries.extend(("GLOBAL", query) for query in GLOBAL_QUERIES)
 
@@ -119,6 +188,10 @@ def main() -> None:
     )
 
     print("PODCAST DISCOVERY BATCH")
+    print(f"Queries BR base: {len(BR_QUERIES)}")
+    print(f"Queries BR trend: {len(BR_TREND_QUERIES)}")
+    if "BR" in markets:
+        print("BR_TREND_QUERIES: ativo no fluxo")
     print(f"Encontrados: {len(found)}")
     print(f"Selecionados: {len(selected)}")
     print(f"Enfileirados: {len(enqueued)}")
@@ -134,7 +207,10 @@ def main() -> None:
     print("Top vídeos enfileirados:")
     for item in enqueued[:10]:
         print(
-            f"- {item['processing_priority_score']:.2f} | {item['duration_seconds']}s | "
+            f"- combined {item['combined_discovery_score']:.2f} | "
+            f"editorial {item['editorial_fit_score']:.2f} | "
+            f"priority {item['processing_priority_score']:.2f} | "
+            f"{item['duration_seconds']}s | "
             f"{item['channel_title']} | {item['title']} | {item['url']}"
         )
     if rejected:
@@ -266,9 +342,16 @@ def _select_diverse_videos(
         )
         video["processing_priority_score"] = score
         video["processing_priority_reason"] = reason
+        editorial_score, editorial_reasons = _editorial_fit_score(video)
+        combined_score = (score * 0.55) + (editorial_score * 0.45)
+        video["editorial_fit_score"] = round(editorial_score, 2)
+        video["editorial_fit_reasons"] = editorial_reasons
+        video["combined_discovery_score"] = round(combined_score, 2)
         video["topic_bucket"] = _topic_bucket(video)
     videos.sort(
         key=lambda item: (
+            item["combined_discovery_score"],
+            item["editorial_fit_score"],
             item["processing_priority_score"],
             item["comment_count"],
             item["view_count"],
@@ -279,6 +362,7 @@ def _select_diverse_videos(
     selected: list[dict[str, Any]] = []
     per_channel: dict[str, int] = defaultdict(int)
     per_market: dict[str, int] = defaultdict(int)
+    per_bucket: dict[str, int] = defaultdict(int)
     for video in videos:
         if len(selected) >= config.PODCAST_DISCOVERY_MAX_RESULTS:
             rejected.extend(
@@ -289,12 +373,19 @@ def _select_diverse_videos(
         if per_channel[channel_key] >= config.PODCAST_DISCOVERY_MAX_PER_CHANNEL:
             rejected.append({**video, "reason": "limite por canal"})
             continue
+        if per_bucket[video["topic_bucket"]] >= 4:
+            rejected.append({**video, "reason": f"limite por bucket: {video['topic_bucket']}"})
+            continue
+        if video["editorial_fit_score"] < 4.5:
+            rejected.append({**video, "reason": "editorial_fit_score baixo"})
+            continue
         if video["processing_priority_score"] < 4:
             rejected.append({**video, "reason": "processing_priority_score < 4"})
             continue
         selected.append(video)
         per_channel[channel_key] += 1
         per_market[video["market"]] += 1
+        per_bucket[video["topic_bucket"]] += 1
     return selected, rejected
 
 
@@ -307,6 +398,9 @@ def _annotate_history(history: VideoHistoryService, video_id: str, item: dict[st
     record["discovery_market"] = item["market"]
     record["discovery_query"] = item["query"]
     record["topic_bucket"] = item["topic_bucket"]
+    record["editorial_fit_score"] = item["editorial_fit_score"]
+    record["editorial_fit_reasons"] = item["editorial_fit_reasons"]
+    record["combined_discovery_score"] = item["combined_discovery_score"]
     record["processing_priority_score"] = item["processing_priority_score"]
     record["processing_priority_reason"] = item["processing_priority_reason"]
     record["updated_at"] = datetime.utcnow().isoformat()
@@ -382,8 +476,12 @@ def _video_lines(item: dict[str, Any]) -> list[str]:
         f"Duration: {item.get('duration_seconds', 0)}",
         f"Views: {item.get('view_count', 0)}",
         f"Comments: {item.get('comment_count', 0)}",
-        f"Score: {item.get('processing_priority_score', 0)}",
-        f"Reason: {item.get('processing_priority_reason', '')}",
+        f"Processing Priority Score: {item.get('processing_priority_score', 0)}",
+        f"Editorial Fit Score: {item.get('editorial_fit_score', 0)}",
+        f"Combined Discovery Score: {item.get('combined_discovery_score', 0)}",
+        f"Topic Bucket: {item.get('topic_bucket', '')}",
+        f"Priority Reason: {item.get('processing_priority_reason', '')}",
+        f"Editorial Reasons: {', '.join(item.get('editorial_fit_reasons', []))}",
         f"URL: {item.get('url', '')}",
         "",
     ]
@@ -393,24 +491,113 @@ def _reject_reason(title: str, channel_title: str, duration_seconds: int) -> str
     text = f"{title} {channel_title}".lower()
     if duration_seconds < config.PODCAST_DISCOVERY_MIN_DURATION_SECONDS:
         return f"duration < {config.PODCAST_DISCOVERY_MIN_DURATION_SECONDS}s"
-    for term in REJECT_TERMS:
+    for term in SHORTS_REJECT_TERMS:
         if term in text:
-            return f"termo rejeitado: {term}"
-    if not any(term in text for term in {"podcast", "entrevista", "interview", "show", "cast"}):
+            return f"shorts rejeitado: {term}"
+    for term in MUSIC_REJECT_TERMS:
+        if term in text:
+            return f"música/trailer/clipe rejeitado: {term}"
+    for term in GAME_REJECT_TERMS:
+        if term in text:
+            return f"gameplay/jogo rejeitado: {term}"
+    for term in LOW_QUALITY_REJECT_TERMS:
+        if term in text:
+            return f"local/institucional rejeitado: {term}"
+    if "react" in text and not _has_strong_podcast_signal(text):
+        return "react/reação rejeitado"
+    if not any(term in text for term in PODCAST_INTENT_TERMS):
         return "não parece podcast/entrevista"
     return ""
 
 
+def _editorial_fit_score(video: dict[str, Any]) -> tuple[float, list[str]]:
+    text = f"{video.get('title', '')} {video.get('channel_title', '')}".lower()
+    duration = int(video.get("duration_seconds") or 0)
+    views = int(video.get("view_count") or 0)
+    comments = int(video.get("comment_count") or 0)
+    score = 0.0
+    reasons: list[str] = []
+
+    strong_sources = sorted(term for term in PODCAST_STRONG_TERMS if term in text)
+    if strong_sources:
+        score += 3.5
+        reasons.append(f"fonte forte: {', '.join(strong_sources[:3])}")
+
+    positive_terms = sorted(term for term in EDITORIAL_POSITIVE_TERMS if term in text)
+    if positive_terms:
+        score += min(3.0, 0.7 * len(positive_terms))
+        reasons.append(f"sinais editoriais: {', '.join(positive_terms[:5])}")
+
+    if 480 <= duration <= 10800:
+        score += 1.4
+        reasons.append("duração boa para podcast/entrevista")
+    elif duration > 10800:
+        score += 0.4
+        reasons.append("duração muito longa, mas aproveitável")
+    else:
+        score -= 4.0
+        reasons.append("duração abaixo do mínimo")
+
+    if comments >= 500:
+        score += 1.2
+        reasons.append("comentários fortes")
+    elif comments >= 100:
+        score += 0.7
+        reasons.append("comentários relevantes")
+    elif comments < 20:
+        score -= 0.8
+        reasons.append("poucos comentários")
+
+    if views >= 300_000:
+        score += 1.2
+        reasons.append("views fortes")
+    elif views >= 50_000:
+        score += 0.7
+        reasons.append("views relevantes")
+    elif views < 5_000:
+        score -= 0.7
+        reasons.append("baixo volume de views")
+
+    negative_categories = [
+        (LOW_QUALITY_REJECT_TERMS, "sinal local/institucional"),
+        (GAME_REJECT_TERMS, "sinal de gameplay/jogo"),
+        (MUSIC_REJECT_TERMS, "sinal de música/trailer"),
+    ]
+    for terms, label in negative_categories:
+        matches = sorted(term for term in terms if term in text)
+        if matches:
+            score -= 4.0
+            reasons.append(f"{label}: {', '.join(matches[:3])}")
+    if "react" in text:
+        score -= 2.0
+        reasons.append("react reduzido")
+    if not _has_strong_podcast_signal(text) and not positive_terms:
+        score -= 2.0
+        reasons.append("canal desconhecido/título genérico")
+
+    return max(0.0, min(10.0, round(score, 2))), reasons or ["sem sinais editoriais fortes"]
+
+
+def _has_strong_podcast_signal(text: str) -> bool:
+    return any(term in text for term in PODCAST_STRONG_TERMS | PODCAST_INTENT_TERMS)
+
+
 def _topic_bucket(video: dict[str, Any]) -> str:
     text = f"{video['title']} {video['channel_title']}".lower()
+    if any(term in text for term in {"ciência", "ciencia", "tecnologia", "tech", "lex fridman"}):
+        return "ciencia/tecnologia"
+    if any(term in text for term in {"dinheiro", "business", "empresa", "mercado", "primo", "socios", "sócios"}):
+        return "business/dinheiro"
+    if any(term in text for term in {"neymar", "futebol", "jogador", "ex jogador", "copa do mundo", "flamengo", "corinthians"}):
+        return "futebol/polemica"
+    if any(term in text for term in {"celebrity", "famous", "hot ones", "club shay shay"}):
+        return "global/celebrity"
     if any(term in text for term in {"política", "politica", "piers", "opinião", "opiniao"}):
         return "politica/opiniao"
     if any(term in text for term in {"crime", "polícia", "policia", "segurança", "investigation"}):
         return "crime/seguranca"
-    if any(term in text for term in {"humor", "comed", "funny", "the noite", "theo von"}):
+    if any(term in text for term in {"humor", "comed", "funny", "the noite", "theo von", "famoso"}):
         return "humor/famoso"
-    if any(term in text for term in {"football", "futebol", "jogador", "nba", "nfl"}):
-        return "esportes/famoso"
     if any(term in text for term in {"história", "historia", "story", "curious", "curios"}):
         return "curiosidade/historia"
     return "podcast/entrevista"

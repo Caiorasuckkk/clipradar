@@ -60,7 +60,24 @@ def main() -> None:
             f"tail_padding={clip.get('tail_padding_applied')} "
             f"tail_seconds={clip.get('tail_padding_seconds')} "
             f"unanswered_question={clip.get('ends_with_unanswered_question')} "
-            f"review_required={clip.get('recommended_review_required')}"
+            f"review_required={clip.get('recommended_review_required')} "
+            f"duplicate_suppressed={clip.get('duplicate_suppressed')} "
+            f"duplicate_of={clip.get('duplicate_of_rank')}"
+        )
+        print(
+            f"promoted_from_diagnostic={clip.get('promoted_from_diagnostic')} "
+            f"promotion_reason={clip.get('promotion_reason')} "
+            f"needs_trim={clip.get('needs_trim')}"
+        )
+        if clip.get("needs_trim"):
+            print(
+                f"trim_reason={clip.get('trim_reason')} "
+                f"strategy={clip.get('suggested_trim_strategy')}"
+            )
+        print(
+            f"engagement_risk={clip.get('engagement_risk_score')} "
+            f"boring_or_confusing={clip.get('boring_or_confusing_score')} "
+            f"feedback_similarity={clip.get('feedback_similarity_reason')}"
         )
         if clip.get("feedback_calibration_notes"):
             print(f"feedback_notes={clip.get('feedback_calibration_notes')}")
@@ -109,7 +126,24 @@ def main() -> None:
             print(
                 f"tail_padding={candidate.get('tail_padding_applied')} "
                 f"tail_seconds={candidate.get('tail_padding_seconds')} "
-                f"unanswered_question={candidate.get('ends_with_unanswered_question')}"
+                f"unanswered_question={candidate.get('ends_with_unanswered_question')} "
+                f"duplicate_suppressed={candidate.get('duplicate_suppressed')} "
+                f"duplicate_of={candidate.get('duplicate_of_rank')}"
+            )
+            print(
+                f"promoted_from_diagnostic={candidate.get('promoted_from_diagnostic')} "
+                f"promotion_reason={candidate.get('promotion_reason')} "
+                f"needs_trim={candidate.get('needs_trim')}"
+            )
+            if candidate.get("needs_trim"):
+                print(
+                    f"trim_reason={candidate.get('trim_reason')} "
+                    f"strategy={candidate.get('suggested_trim_strategy')}"
+                )
+            print(
+                f"engagement_risk={candidate.get('engagement_risk_score')} "
+                f"boring_or_confusing={candidate.get('boring_or_confusing_score')} "
+                f"feedback_similarity={candidate.get('feedback_similarity_reason')}"
             )
             if candidate.get("feedback_calibration_notes"):
                 print(f"feedback_notes={candidate.get('feedback_calibration_notes')}")

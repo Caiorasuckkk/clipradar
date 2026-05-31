@@ -10,13 +10,28 @@ from typing import Any
 from app import config
 
 
-POSITIVE_REASONS = {"otimo", "bom", "perfeito", "bom_final_engracado"}
-EXTEND_END_REASONS = {"otimo_final_curto", "bom_mas_curto", "bom_com_ajuste"}
+POSITIVE_REASONS = {
+    "otimo", "bom", "perfeito", "bom_final_engracado", "muito_bom",
+    "otimo_mas_longo",
+}
+EXTEND_END_REASONS = {
+    "otimo_final_curto", "bom_mas_curto", "bom_com_ajuste",
+}
+POSITIVE_ADJUSTMENT_REASONS = EXTEND_END_REASONS | {"otimo_mas_longo"}
+STRONG_POSITIVE_REASONS = {"muito_bom", "perfeito", "otimo"}
+DUPLICATE_REASONS = {"duplicado_versao_inferior"}
+LOW_ENGAGEMENT_REASONS = {"nao_prendeu", "sem_sentido", "nada_com_nada"}
+INCOMPLETE_ENDING_REASONS = {"nao_fechou_bem", "final_sem_contexto", "pergunta_sem_resposta"}
 NEGATIVE_REASONS = {
     "propaganda_produto",
     "nada_com_nada",
     "pergunta_sem_resposta",
     "mediano_ruim",
+    "nao_prendeu",
+    "sem_sentido",
+    "duplicado_versao_inferior",
+    "nao_fechou_bem",
+    "final_sem_contexto",
 }
 
 
@@ -32,6 +47,13 @@ class FeedbackCalibration:
     suggested_tail_padding_seconds: int
     positive_reasons: list[str]
     negative_reasons: list[str]
+    duplicate_reasons: list[str]
+    low_engagement_reasons: list[str]
+    strong_positive_reasons: list[str]
+    positive_strong_reasons: list[str]
+    positive_adjustment_reasons: list[str]
+    negative_engagement_reasons: list[str]
+    incomplete_ending_reasons: list[str]
     needs_adjustment_reasons: list[str]
 
 
@@ -95,7 +117,14 @@ class FeedbackCalibrationService:
             suggested_tail_padding_seconds=suggested_tail_padding_seconds,
             positive_reasons=sorted(POSITIVE_REASONS & set(reason_counts)),
             negative_reasons=sorted(NEGATIVE_REASONS & set(reason_counts)),
-            needs_adjustment_reasons=sorted(EXTEND_END_REASONS & set(reason_counts)),
+            duplicate_reasons=sorted(DUPLICATE_REASONS & set(reason_counts)),
+            low_engagement_reasons=sorted(LOW_ENGAGEMENT_REASONS & set(reason_counts)),
+            strong_positive_reasons=sorted(STRONG_POSITIVE_REASONS & set(reason_counts)),
+            positive_strong_reasons=sorted(STRONG_POSITIVE_REASONS & set(reason_counts)),
+            positive_adjustment_reasons=sorted(POSITIVE_ADJUSTMENT_REASONS & set(reason_counts)),
+            negative_engagement_reasons=sorted(LOW_ENGAGEMENT_REASONS & set(reason_counts)),
+            incomplete_ending_reasons=sorted(INCOMPLETE_ENDING_REASONS & set(reason_counts)),
+            needs_adjustment_reasons=sorted(POSITIVE_ADJUSTMENT_REASONS & set(reason_counts)),
         )
 
     def analyzer_recommendations(self) -> list[str]:
@@ -113,6 +142,14 @@ class FeedbackCalibrationService:
             recommendations.append(
                 "Permitir candidatos abaixo de 60s quando alignment/standalone/narrativa forem altos."
             )
+        if calibration.duplicate_reasons:
+            recommendations.append("Suprimir duplicados e versões inferiores por região temporal.")
+        if calibration.low_engagement_reasons:
+            recommendations.append("Penalizar padrões de baixo engajamento: nao_prendeu/sem_sentido.")
+        if calibration.positive_adjustment_reasons:
+            recommendations.append("Promover bons candidatos com ajuste manual como review_required/needs_trim.")
+        if calibration.incomplete_ending_reasons:
+            recommendations.append("Manter em diagnostics candidatos com risco de final sem fechamento.")
         return recommendations
 
     def positive_ranges_for_video(self, video_id: str) -> list[dict[str, Any]]:
@@ -153,6 +190,35 @@ class FeedbackCalibrationService:
             )
         return ranges
 
+    def reviewed_ranges_for_video(self, video_id: str) -> list[dict[str, Any]]:
+        path = self.latest_dataset_path()
+        if not path:
+            return []
+        try:
+            with path.open("r", encoding="utf-8") as file:
+                payload = json.load(file)
+        except Exception:
+            return []
+        ranges: list[dict[str, Any]] = []
+        for clip in payload.get("clips", []):
+            if clip.get("video_id") != video_id:
+                continue
+            start = clip.get("start_seconds")
+            end = clip.get("end_seconds")
+            if start is None or end is None:
+                continue
+            ranges.append(
+                {
+                    "start": float(start),
+                    "end": float(end),
+                    "rank": clip.get("rank"),
+                    "reason": clip.get("review_reason", ""),
+                    "rating": clip.get("review_rating"),
+                    "status": clip.get("review_status"),
+                }
+            )
+        return ranges
+
     @staticmethod
     def _empty(path: Path | None) -> FeedbackCalibration:
         return FeedbackCalibration(
@@ -166,5 +232,12 @@ class FeedbackCalibrationService:
             suggested_tail_padding_seconds=6,
             positive_reasons=[],
             negative_reasons=[],
+            duplicate_reasons=[],
+            low_engagement_reasons=[],
+            strong_positive_reasons=[],
+            positive_strong_reasons=[],
+            positive_adjustment_reasons=[],
+            negative_engagement_reasons=[],
+            incomplete_ending_reasons=[],
             needs_adjustment_reasons=[],
         )

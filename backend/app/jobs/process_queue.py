@@ -75,11 +75,23 @@ def main() -> None:
                 transcriber.save_transcript(video_id, transcript)
                 downloader.cleanup(video_id)
 
-            clips = analyzer.analyze(transcript, video)
-            if not clips:
+            analysis = analyzer.analyze_with_diagnostics(transcript, video)
+            clips = analysis["clips"]
+            diagnostic_candidates = analysis["diagnostic_candidates"]
+            if not clips and not diagnostic_candidates:
+                output_path = save_clips(video, analysis, transcript)
                 history.mark_rejected(video_id)
                 rejected += 1
-                print(f"Nenhum clipe encontrado: {video_id}")
+                print(f"Nenhum clipe ou diagnostic encontrado: {video_id} — {output_path}")
+                continue
+            if not clips and diagnostic_candidates:
+                output_path = save_clips(video, analysis, transcript)
+                history.mark_needs_manual_review(video_id)
+                processed += 1
+                print(
+                    f"Nenhum recomendado, mas {len(diagnostic_candidates)} diagnostics "
+                    f"salvos para revisão manual: {video_id} — {output_path}"
+                )
                 continue
 
             for clip in clips:
@@ -90,7 +102,7 @@ def main() -> None:
                 )
                 clip.update(meta)
 
-            output_path = save_clips(video, clips, transcript)
+            output_path = save_clips(video, analysis, transcript)
             history.mark_done(video_id)
             processed += 1
             total_clips += len(clips)
@@ -104,7 +116,7 @@ def main() -> None:
     print_summary(processed, total_clips, errors, rejected, elapsed)
 
 
-def save_clips(video: dict[str, Any], clips: list[dict[str, Any]], transcript: dict[str, Any] | None = None) -> Path:
+def save_clips(video: dict[str, Any], analysis: dict[str, Any], transcript: dict[str, Any] | None = None) -> Path:
     config.STORAGE_CLIPS_DIR.mkdir(parents=True, exist_ok=True)
     video_id = video["video_id"]
     output_path = config.STORAGE_CLIPS_DIR / f"{video_id}_clips.json"
@@ -115,7 +127,10 @@ def save_clips(video: dict[str, Any], clips: list[dict[str, Any]], transcript: d
         "url": video.get("url", ""),
         "processed_at": datetime.utcnow().isoformat(),
         "transcript_metadata": _transcript_metadata(transcript or {}),
-        "clips": clips,
+        "analysis_note": analysis["analysis_summary"].get("reason", ""),
+        "analysis_summary": analysis["analysis_summary"],
+        "clips": analysis["clips"],
+        "diagnostic_candidates": analysis["diagnostic_candidates"],
     }
     with output_path.open("w", encoding="utf-8") as file:
         json.dump(result, file, ensure_ascii=False, indent=2)

@@ -81,12 +81,16 @@ class ClipAnalyzerService:
         "subscribe", "like the video", "merch", "membership", "promo code",
         "ad break", "produto", "produtos", "venda", "vender", "comprar",
         "compre", "curso", "demonstração de produto", "demonstracao de produto",
+        "moon pay", "moonpay", "wallet", "bank transfer", "apple pay",
+        "paypal", "venmo", "verify your identity", "fund it with",
+        "your keys stay", "agent can get to work",
     }
     PRODUCT_TERMS = {
         "produto", "produtos", "patrocínio", "patrocinio", "publicidade",
         "propaganda", "merchan", "cupom", "venda", "vender", "comprar",
         "compre", "loja", "curso", "demonstração de produto",
-        "demonstracao de produto",
+        "demonstracao de produto", "moon pay", "moonpay", "wallet",
+        "bank transfer", "apple pay", "paypal", "venmo",
     }
     ENTITY_ACTION_TERMS = {
         "polícia", "policia", "crime", "prisão", "prisao", "investigação",
@@ -138,6 +142,9 @@ class ClipAnalyzerService:
         )
         thought_units = self._build_thought_units(segments, video_duration, video_metadata)
         thought_units.extend(self._feedback_seed_units(segments, video_duration, video_metadata))
+        self._apply_feedback_region_scores(thought_units, video_metadata)
+        self._apply_general_feedback_promotion(thought_units)
+        self._suppress_duplicates(thought_units)
         selected = self._select_thought_units(thought_units)
         diagnostics = self._select_diagnostic_units(thought_units, selected)
 
@@ -212,6 +219,11 @@ class ClipAnalyzerService:
             "recommended_version": False if rejected_by_analyzer else unit["recommended_version"],
             "recommended_review_required": unit["recommended_review_required"],
             "recommendation_reason": unit["recommendation_reason"],
+            "promoted_from_diagnostic": unit["promoted_from_diagnostic"],
+            "promotion_reason": unit["promotion_reason"],
+            "needs_trim": unit["needs_trim"],
+            "trim_reason": unit["trim_reason"],
+            "suggested_trim_strategy": unit["suggested_trim_strategy"],
             "story_completion_score": round(unit["story_completion_score"], 2),
             "thought_closure_score": round(unit["thought_closure_score"], 2),
             "context_before_score": round(unit["context_before_score"], 2),
@@ -228,6 +240,10 @@ class ClipAnalyzerService:
             "ends_with_unanswered_question": unit["ends_with_unanswered_question"],
             "feedback_calibration_notes": unit["feedback_calibration_notes"],
             "feedback_similarity_reason": unit["feedback_similarity_reason"],
+            "engagement_risk_score": round(unit["engagement_risk_score"], 2),
+            "boring_or_confusing_score": round(unit["boring_or_confusing_score"], 2),
+            "duplicate_of_rank": unit["duplicate_of_rank"],
+            "duplicate_suppressed": unit["duplicate_suppressed"],
             "not_recommended_reason": unit["not_recommended_reason"],
             "failed_criteria": unit["failed_criteria"],
             "rejected_by_analyzer": rejected_by_analyzer,
@@ -247,8 +263,14 @@ class ClipAnalyzerService:
     ) -> list[dict[str, Any]]:
         selected_ids = {id(unit) for unit in selected}
         candidates = sorted(
-            [unit for unit in units if id(unit) not in selected_ids],
+            [
+                unit
+                for unit in units
+                if id(unit) not in selected_ids
+            ],
             key=lambda unit: (
+                unit.get("not_recommended_reason") == "duplicado_versao_inferior",
+                not unit.get("duplicate_suppressed"),
                 unit["score"],
                 unit["narrative_quality_score"],
                 unit["standalone_score"],
@@ -261,7 +283,11 @@ class ClipAnalyzerService:
         for candidate in candidates:
             if candidate["duration"] < self.SHORT_MIN_SECONDS:
                 continue
-            if any(self._overlap_ratio(candidate, item) > 0.75 for item in diagnostics):
+            is_feedback_duplicate = candidate.get("not_recommended_reason") == "duplicado_versao_inferior"
+            if (
+                not is_feedback_duplicate
+                and any(self._overlap_ratio(candidate, item) > 0.75 for item in diagnostics)
+            ):
                 continue
             diagnostics.append(candidate)
             if len(diagnostics) >= self.DIAGNOSTIC_TOP_N:
@@ -347,6 +373,238 @@ class ClipAnalyzerService:
                 unit["tail_padding_reason"] = f"feedback: {item['reason']}"
             units.append(unit)
         return units
+
+    def _apply_feedback_region_scores(
+        self,
+        units: list[dict[str, Any]],
+        video_metadata: dict[str, Any],
+    ) -> None:
+        video_id = str(video_metadata.get("video_id", ""))
+        if not video_id:
+            return
+        feedback_items = self.feedback_calibration_service.reviewed_ranges_for_video(video_id)
+        positive_reasons = {"muito_bom", "perfeito", "otimo", "bom", "otimo_mas_longo"}
+        positive_adjustment_reasons = {"otimo_mas_longo"}
+        low_engagement_reasons = {"nao_prendeu", "sem_sentido", "nada_com_nada"}
+        incomplete_reasons = {"nao_fechou_bem", "final_sem_contexto", "pergunta_sem_resposta"}
+        for unit in units:
+            matches = [
+                (self._range_overlap_ratio(unit, item), item)
+                for item in feedback_items
+            ]
+            matches = [(overlap, item) for overlap, item in matches if overlap >= 0.45]
+            if not matches:
+                continue
+
+            positive_overlap = max(
+                (overlap for overlap, item in matches if str(item.get("reason", "")) in positive_reasons),
+                default=0.0,
+            )
+            low_overlap = max(
+                (overlap for overlap, item in matches if str(item.get("reason", "")) in low_engagement_reasons),
+                default=0.0,
+            )
+            duplicate_overlap = max(
+                (overlap for overlap, item in matches if str(item.get("reason", "")) == "duplicado_versao_inferior"),
+                default=0.0,
+            )
+
+            best_overlap, best_item = max(matches, key=lambda pair: pair[0])
+            reason = str(best_item.get("reason", ""))
+            rating = best_item.get("rating")
+
+            if positive_overlap > 0 and positive_overlap >= max(low_overlap, duplicate_overlap) - 0.10:
+                positive_item = max(
+                    (
+                        (overlap, item)
+                        for overlap, item in matches
+                        if str(item.get("reason", "")) in positive_reasons
+                    ),
+                    key=lambda pair: pair[0],
+                )[1]
+                positive_reason = str(positive_item.get("reason", ""))
+                positive_rating = positive_item.get("rating")
+                unit["feedback_calibration_notes"].append(
+                    f"feedback: região parecida avaliada como {positive_reason} "
+                    f"(rating={positive_rating})"
+                )
+                if self._can_promote_from_feedback(unit):
+                    unit["recommended_version"] = True
+                    unit["recommended_review_required"] = True
+                    unit["recommendation_reason"] = "promoted from diagnostic by positive feedback pattern"
+                    unit["promoted_from_diagnostic"] = True
+                    unit["promotion_reason"] = "promoted from diagnostic by positive feedback pattern"
+                    unit["not_recommended_reason"] = ""
+                    unit["failed_criteria"] = []
+                if positive_reason in positive_adjustment_reasons:
+                    self._mark_needs_trim(unit, f"feedback: {positive_reason}")
+                continue
+
+            if reason in low_engagement_reasons or low_overlap > positive_overlap + 0.10:
+                reason = reason if reason in low_engagement_reasons else "nao_prendeu"
+                unit["engagement_risk_score"] = max(unit["engagement_risk_score"], 8.0)
+                unit["boring_or_confusing_score"] = max(unit["boring_or_confusing_score"], 8.0)
+                unit["recommended_version"] = False
+                unit["recommended_review_required"] = False
+                unit["not_recommended_reason"] = reason
+                if reason not in unit["failed_criteria"]:
+                    unit["failed_criteria"].append(reason)
+                unit["feedback_calibration_notes"].append(
+                    f"feedback: região parecida marcada como {reason}"
+                )
+                continue
+
+            if reason in incomplete_reasons:
+                unit["recommended_version"] = False
+                unit["recommended_review_required"] = False
+                unit["not_recommended_reason"] = "nao_fechou_bem_risk"
+                if "nao_fechou_bem_risk" not in unit["failed_criteria"]:
+                    unit["failed_criteria"].append("nao_fechou_bem_risk")
+                unit["feedback_calibration_notes"].append(
+                    f"feedback: região parecida marcada como {reason}"
+                )
+                continue
+
+            if reason == "duplicado_versao_inferior" or duplicate_overlap > positive_overlap + 0.10:
+                unit["duplicate_suppressed"] = True
+                unit["not_recommended_reason"] = "duplicado_versao_inferior"
+                if "duplicado_versao_inferior" not in unit["failed_criteria"]:
+                    unit["failed_criteria"].append("duplicado_versao_inferior")
+                unit["feedback_calibration_notes"].append(
+                    f"feedback: região marcada como duplicado/versão inferior (rating={rating})"
+                )
+
+    def _apply_general_feedback_promotion(self, units: list[dict[str, Any]]) -> None:
+        for unit in units:
+            if unit.get("recommended_version"):
+                continue
+            if unit.get("duplicate_suppressed"):
+                continue
+            if unit.get("rejected_content_reason"):
+                continue
+            if unit.get("non_content_score", 0) != 0:
+                continue
+            if unit.get("ends_with_unanswered_question"):
+                continue
+            if unit.get("engagement_risk_score", 0) >= 6:
+                continue
+            if unit.get("boring_or_confusing_score", 0) >= 6:
+                continue
+            if self._has_incomplete_promotion_risk(unit):
+                unit["not_recommended_reason"] = unit["not_recommended_reason"] or "nao_fechou_bem_risk"
+                if "nao_fechou_bem_risk" not in unit["failed_criteria"]:
+                    unit["failed_criteria"].append("nao_fechou_bem_risk")
+                continue
+
+            strong_promotion = (
+                unit.get("narrative_quality_score", 0) >= 9
+                and unit.get("standalone_score", 0) >= 10
+                and unit.get("reference_alignment_score", 0) >= 6.5
+            )
+            general_promotion = (
+                unit.get("score", 0) >= 6.6
+                and unit.get("standalone_score", 0) >= 9
+                and unit.get("narrative_quality_score", 0) >= 6.5
+                and unit.get("reference_alignment_score", 0) >= 6.0
+            )
+            if strong_promotion or general_promotion:
+                unit["recommended_version"] = True
+                unit["recommended_review_required"] = True
+                unit["promoted_from_diagnostic"] = True
+                unit["promotion_reason"] = "promoted from diagnostic by general feedback calibration"
+                unit["recommendation_reason"] = unit["promotion_reason"]
+                unit["not_recommended_reason"] = ""
+                unit["failed_criteria"] = []
+                if unit.get("duration", 0) > self.FULL_MAX_SECONDS or unit.get("contains_multiple_thoughts"):
+                    self._mark_needs_trim(unit, "feedback: otimo_mas_longo")
+
+    @staticmethod
+    def _has_incomplete_promotion_risk(unit: dict[str, Any]) -> bool:
+        if unit.get("weak_development"):
+            return True
+        if not unit.get("has_complete_ending"):
+            return True
+        if unit.get("ends_with_unanswered_question"):
+            return True
+        if str(unit.get("ending_type", "")) in {"incomplete", "cut_by_limit"}:
+            return True
+        return False
+
+    @staticmethod
+    def _mark_needs_trim(unit: dict[str, Any], reason: str) -> None:
+        unit["needs_trim"] = True
+        unit["trim_reason"] = reason
+        unit["suggested_trim_strategy"] = (
+            "keep hook and strongest development, avoid full long story"
+        )
+
+    def _suppress_duplicates(self, units: list[dict[str, Any]]) -> None:
+        ordered = sorted(
+            units,
+            key=lambda unit: (
+                unit.get("recommended_version", False),
+                self._feedback_rating_weight(unit),
+                unit.get("reference_alignment_score", 0.0),
+                unit.get("standalone_score", 0.0),
+                unit.get("narrative_quality_score", 0.0),
+                -unit.get("false_full_thought_risk", 10.0),
+                not bool(unit.get("rejected_content_reason")),
+            ),
+            reverse=True,
+        )
+        kept: list[dict[str, Any]] = []
+        for unit in ordered:
+            duplicate_of = next((item for item in kept if self._duplicate_region(unit, item)), None)
+            if duplicate_of is None:
+                kept.append(unit)
+                continue
+            unit["duplicate_suppressed"] = True
+            unit["duplicate_of_rank"] = duplicate_of.get("source_ranks", [None])[0]
+            unit["recommended_version"] = False
+            unit["recommended_review_required"] = False
+            if "duplicate region" not in unit["failed_criteria"]:
+                unit["failed_criteria"].append("duplicate region")
+            unit["not_recommended_reason"] = unit["not_recommended_reason"] or "duplicate region"
+
+    def _can_promote_from_feedback(self, unit: dict[str, Any]) -> bool:
+        return (
+            unit.get("score", 0) >= 6.5
+            and unit.get("standalone_score", 0) >= 9
+            and unit.get("narrative_quality_score", 0) >= 6.5
+            and unit.get("non_content_score", 0) == 0
+            and not unit.get("ends_with_unanswered_question")
+            and not unit.get("rejected_content_reason")
+            and unit.get("engagement_risk_score", 0) < 6
+            and unit.get("boring_or_confusing_score", 0) < 6
+        )
+
+    @staticmethod
+    def _range_overlap_ratio(unit: dict[str, Any], item: dict[str, Any]) -> float:
+        start = max(float(unit["start"]), float(item["start"]))
+        end = min(float(unit["end"]), float(item["end"]))
+        overlap = max(0.0, end - start)
+        return overlap / max(1.0, min(float(unit["duration"]), float(item["end"]) - float(item["start"])))
+
+    @staticmethod
+    def _duplicate_region(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        overlap_seconds = max(0.0, min(left["end"], right["end"]) - max(left["start"], right["start"]))
+        starts_close = abs(left["start"] - right["start"]) <= 12
+        ends_close = abs(left["end"] - right["end"]) <= 12
+        return (
+            overlap_seconds >= 35
+            and ClipAnalyzerService._overlap_ratio(left, right) > 0.5
+        ) or (starts_close and ends_close)
+
+    @staticmethod
+    def _feedback_rating_weight(unit: dict[str, Any]) -> float:
+        notes = " ".join(unit.get("feedback_calibration_notes", []))
+        if "rating=5" in notes:
+            return 5.0
+        if "rating=4" in notes:
+            return 4.0
+        if "rating=3" in notes:
+            return 3.0
+        return 0.0
 
     def _candidate_start_indexes(self, segments: list[dict[str, Any]]) -> list[int]:
         starts: list[int] = []
@@ -753,6 +1011,11 @@ class ClipAnalyzerService:
             "recommended_version": recommended_version,
             "recommended_review_required": recommended_review_required,
             "recommendation_reason": recommendation_reason,
+            "promoted_from_diagnostic": False,
+            "promotion_reason": "",
+            "needs_trim": False,
+            "trim_reason": "",
+            "suggested_trim_strategy": "",
             "story_completion_score": story_completion_score,
             "thought_closure_score": thought_closure_score,
             "context_before_score": context_before_score,
@@ -777,6 +1040,10 @@ class ClipAnalyzerService:
                 tail_padding_applied,
             ),
             "feedback_similarity_reason": self._feedback_similarity_reason(reference_alignment_score),
+            "engagement_risk_score": 0.0,
+            "boring_or_confusing_score": 0.0,
+            "duplicate_of_rank": None,
+            "duplicate_suppressed": False,
             "reason_for_duration": self._reason_for_duration(reported_clip_version, duration, is_podcast),
             "ending_type": ending_type,
             "context_expanded": context_expanded,
@@ -848,9 +1115,12 @@ class ClipAnalyzerService:
             units,
             key=lambda unit: (
                 unit["recommended_version"],
+                unit.get("feedback_similarity_reason", "") != "baixo alinhamento com benchmark de cortes bons",
+                unit["reference_alignment_score"],
                 unit["narrative_quality_score"],
                 unit["standalone_score"],
                 -unit["false_full_thought_risk"],
+                -unit["engagement_risk_score"],
                 unit["score"],
                 unit["has_complete_ending"],
                 unit["has_development"],
@@ -862,6 +1132,10 @@ class ClipAnalyzerService:
         )
         selected: list[dict[str, Any]] = []
         for candidate in candidates:
+            if candidate["duplicate_suppressed"]:
+                continue
+            if candidate["engagement_risk_score"] >= 7 or candidate["boring_or_confusing_score"] >= 7:
+                continue
             if not candidate["recommended_version"]:
                 continue
             if candidate["narrative_quality_score"] < 5.0:
@@ -871,7 +1145,13 @@ class ClipAnalyzerService:
             if candidate["false_full_thought_risk"] > 6.5:
                 continue
             if candidate["duration"] < self.MIN_CLIP_SECONDS:
-                if candidate["story_completion_score"] < 8.5 or candidate["clip_version"] != "short":
+                if not (
+                    candidate.get("promoted_from_diagnostic")
+                    and candidate["duration"] >= self.SHORT_MIN_SECONDS
+                ) and (
+                    candidate["story_completion_score"] < 8.5
+                    or candidate["clip_version"] != "short"
+                ):
                     continue
             if candidate["duration"] > self.HARD_MAX_SECONDS:
                 continue

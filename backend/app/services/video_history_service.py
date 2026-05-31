@@ -122,6 +122,9 @@ class VideoHistoryService:
     def mark_rejected(self, video_id: str) -> None:
         self._set_status(video_id, "rejected")
 
+    def mark_needs_manual_review(self, video_id: str) -> None:
+        self._set_status(video_id, "needs_manual_review")
+
     def mark_rejected_queue(self, video_id: str, reason: str) -> None:
         data = self._read()
         item = data.get(video_id, {"video_id": video_id})
