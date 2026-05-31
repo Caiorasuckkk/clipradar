@@ -78,15 +78,29 @@ def main() -> None:
             analysis = analyzer.analyze_with_diagnostics(transcript, video)
             clips = analysis["clips"]
             diagnostic_candidates = analysis["diagnostic_candidates"]
+            history.update_source_quality(video_id, analysis["analysis_summary"])
+            source_tier = analysis["analysis_summary"].get("source_quality_tier", "")
+            if source_tier in {"bad_source", "weak_source"}:
+                print(
+                    "Vídeo com baixa qualidade de fonte para clipping: "
+                    f"{source_tier} / {analysis['analysis_summary'].get('source_quality_score')} / "
+                    f"{analysis['analysis_summary'].get('source_quality_reason')}"
+                )
             if not clips and not diagnostic_candidates:
                 output_path = save_clips(video, analysis, transcript)
-                history.mark_rejected(video_id)
+                if analysis["analysis_summary"].get("should_continue_video_review") is False:
+                    history.mark_source_rejected(video_id)
+                else:
+                    history.mark_rejected(video_id)
                 rejected += 1
                 print(f"Nenhum clipe ou diagnostic encontrado: {video_id} — {output_path}")
                 continue
             if not clips and diagnostic_candidates:
                 output_path = save_clips(video, analysis, transcript)
-                history.mark_needs_manual_review(video_id)
+                if analysis["analysis_summary"].get("should_continue_video_review") is False:
+                    history.mark_weak_source_reviewed(video_id)
+                else:
+                    history.mark_needs_manual_review(video_id)
                 processed += 1
                 print(
                     f"Nenhum recomendado, mas {len(diagnostic_candidates)} diagnostics "
@@ -129,6 +143,11 @@ def save_clips(video: dict[str, Any], analysis: dict[str, Any], transcript: dict
         "transcript_metadata": _transcript_metadata(transcript or {}),
         "analysis_note": analysis["analysis_summary"].get("reason", ""),
         "analysis_summary": analysis["analysis_summary"],
+        "source_quality_score": analysis["analysis_summary"].get("source_quality_score"),
+        "source_quality_tier": analysis["analysis_summary"].get("source_quality_tier"),
+        "source_quality_reason": analysis["analysis_summary"].get("source_quality_reason", ""),
+        "source_quality_warning": analysis["analysis_summary"].get("source_quality_warning", ""),
+        "should_continue_video_review": analysis["analysis_summary"].get("should_continue_video_review", True),
         "clips": analysis["clips"],
         "diagnostic_candidates": analysis["diagnostic_candidates"],
     }

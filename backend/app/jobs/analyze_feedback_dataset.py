@@ -42,13 +42,37 @@ def main() -> None:
     for reason in calibration.strong_positive_reasons:
         print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
     print("")
+    print("Moderate positive reasons:")
+    for reason in calibration.moderate_positive_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
     print("Positive adjustment reasons:")
     for reason in calibration.positive_adjustment_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
+    print("Trim positive reasons:")
+    for reason in calibration.trim_positive_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
+    print("Strong negative reasons:")
+    for reason in calibration.strong_negative_reasons:
         print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
     print("")
     print("Incomplete ending reasons:")
     for reason in calibration.incomplete_ending_reasons:
         print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
+    print("Incomplete story reasons:")
+    for reason in calibration.incomplete_story_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
+    print("Source quality warning reasons:")
+    for reason in calibration.source_quality_warning_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
+    print("Average rating por reason:")
+    for reason, rating in sorted(calibration.average_rating_by_reason.items()):
+        print(f"- {reason}: {rating}")
     print("")
     print("Reasons de ajuste:")
     for reason in calibration.needs_adjustment_reasons:
@@ -64,6 +88,35 @@ def main() -> None:
     print("Recomendações automáticas para o analyzer:")
     for recommendation in service.analyzer_recommendations():
         print(f"- {recommendation}")
+    print("")
+    print("Resumo por vídeo:")
+    summaries = sorted(
+        service.source_feedback_summary().values(),
+        key=lambda item: item.source_quality_score_from_feedback,
+        reverse=True,
+    )
+    for item in summaries:
+        print(
+            f"- {item.video_id}: score={item.source_quality_score_from_feedback} "
+            f"avg={item.average_rating} approved={item.approved_count} "
+            f"rejected={item.rejected_count} rejection_rate={item.rejection_rate} "
+            f"weak_source={item.weak_source_feedback_count} "
+            f"reasons={', '.join(item.source_quality_reasons[:4])}"
+        )
+    print("")
+    print("Top vídeos bons:")
+    for item in summaries[:5]:
+        print(f"- {item.video_id}: {item.source_quality_score_from_feedback}")
+    print("")
+    print("Top vídeos fracos:")
+    for item in list(reversed(summaries))[:5]:
+        print(f"- {item.video_id}: {item.source_quality_score_from_feedback}")
+    print("")
+    for item in summaries:
+        if item.video_id == "758VjvlA-xo" and item.source_quality_score_from_feedback < 5.0:
+            print("Recomendação: João Kléber / 758VjvlA-xo deve ser tratado como weak_source ou bad_source.")
+        if item.video_id in {"vZdVOYUl8Sg", "LuEPSwvsBrs"} and item.source_quality_score_from_feedback >= 5.0:
+            print(f"Recomendação: {item.video_id} deve continuar como good_source/review_source se os ratings seguirem bons.")
 
 
 def configure_output() -> None:

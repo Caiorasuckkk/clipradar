@@ -145,7 +145,10 @@ class ClipAnalyzerService:
         self._apply_feedback_region_scores(thought_units, video_metadata)
         self._apply_general_feedback_promotion(thought_units)
         self._suppress_duplicates(thought_units)
-        selected = self._select_thought_units(thought_units)
+        self._apply_ranking_and_trim(thought_units)
+        source_quality = self._source_quality_score(thought_units, video_metadata)
+        self._apply_source_quality_decision(thought_units, source_quality)
+        selected = self._select_thought_units(thought_units, source_quality)
         diagnostics = self._select_diagnostic_units(thought_units, selected)
 
         clips = [
@@ -163,6 +166,10 @@ class ClipAnalyzerService:
             reason = "nenhum candidato detectado"
         elif len(clips) < 5:
             reason = "menos clipes retornados porque os demais não atingiram qualidade narrativa mínima"
+        if source_quality["source_quality_tier"] == "bad_source":
+            reason = "vídeo/fonte fraco para clipping"
+        elif source_quality["source_quality_tier"] == "weak_source" and clips:
+            reason = "fonte fraca: recomendações limitadas para revisão manual"
 
         return {
             "clips": clips,
@@ -171,7 +178,9 @@ class ClipAnalyzerService:
                 "recommended_count": len(clips),
                 "diagnostic_count": len(diagnostic_candidates),
                 "reason": reason,
+                **source_quality,
             },
+            **source_quality,
         }
 
     def _format_clip(
@@ -224,6 +233,21 @@ class ClipAnalyzerService:
             "needs_trim": unit["needs_trim"],
             "trim_reason": unit["trim_reason"],
             "suggested_trim_strategy": unit["suggested_trim_strategy"],
+            "suggested_trim_start_seconds": unit["suggested_trim_start_seconds"],
+            "suggested_trim_end_seconds": unit["suggested_trim_end_seconds"],
+            "suggested_trim_duration_seconds": unit["suggested_trim_duration_seconds"],
+            "trim_confidence_score": unit["trim_confidence_score"],
+            "trim_strategy": unit["trim_strategy"],
+            "trim_warning": unit["trim_warning"],
+            "ranking_quality_score": unit["ranking_quality_score"],
+            "ranking_quality_tier": unit["ranking_quality_tier"],
+            "ranking_reason": unit["ranking_reason"],
+            "long_incomplete_story_risk": unit["long_incomplete_story_risk"],
+            "source_quality_score": unit.get("source_quality_score"),
+            "source_quality_tier": unit.get("source_quality_tier"),
+            "source_quality_reason": unit.get("source_quality_reason", ""),
+            "source_quality_warning": unit.get("source_quality_warning", ""),
+            "should_continue_video_review": unit.get("should_continue_video_review", True),
             "story_completion_score": round(unit["story_completion_score"], 2),
             "thought_closure_score": round(unit["thought_closure_score"], 2),
             "context_before_score": round(unit["context_before_score"], 2),
@@ -383,10 +407,17 @@ class ClipAnalyzerService:
         if not video_id:
             return
         feedback_items = self.feedback_calibration_service.reviewed_ranges_for_video(video_id)
-        positive_reasons = {"muito_bom", "perfeito", "otimo", "bom", "otimo_mas_longo"}
+        positive_reasons = {
+            "muito_bom", "perfeito", "otimo", "bom", "otimo_mas_longo",
+            "bom_nao_otimo",
+        }
         positive_adjustment_reasons = {"otimo_mas_longo"}
         low_engagement_reasons = {"nao_prendeu", "sem_sentido", "nada_com_nada"}
-        incomplete_reasons = {"nao_fechou_bem", "final_sem_contexto", "pergunta_sem_resposta"}
+        strong_negative_reasons = {"nao_gostei", "historia_longa_incompleta"}
+        incomplete_reasons = {
+            "nao_fechou_bem", "final_sem_contexto", "pergunta_sem_resposta",
+            "historia_longa_incompleta",
+        }
         for unit in units:
             matches = [
                 (self._range_overlap_ratio(unit, item), item)
@@ -404,6 +435,10 @@ class ClipAnalyzerService:
                 (overlap for overlap, item in matches if str(item.get("reason", "")) in low_engagement_reasons),
                 default=0.0,
             )
+            strong_negative_overlap = max(
+                (overlap for overlap, item in matches if str(item.get("reason", "")) in strong_negative_reasons),
+                default=0.0,
+            )
             duplicate_overlap = max(
                 (overlap for overlap, item in matches if str(item.get("reason", "")) == "duplicado_versao_inferior"),
                 default=0.0,
@@ -413,7 +448,7 @@ class ClipAnalyzerService:
             reason = str(best_item.get("reason", ""))
             rating = best_item.get("rating")
 
-            if positive_overlap > 0 and positive_overlap >= max(low_overlap, duplicate_overlap) - 0.10:
+            if positive_overlap > 0 and positive_overlap >= max(low_overlap, duplicate_overlap, strong_negative_overlap) - 0.10:
                 positive_item = max(
                     (
                         (overlap, item)
@@ -428,6 +463,8 @@ class ClipAnalyzerService:
                     f"feedback: região parecida avaliada como {positive_reason} "
                     f"(rating={positive_rating})"
                 )
+                if positive_reason == "bom_nao_otimo":
+                    unit["feedback_similarity_reason"] = "bom, mas não ótimo"
                 if self._can_promote_from_feedback(unit):
                     unit["recommended_version"] = True
                     unit["recommended_review_required"] = True
@@ -442,6 +479,19 @@ class ClipAnalyzerService:
 
             if reason in low_engagement_reasons or low_overlap > positive_overlap + 0.10:
                 reason = reason if reason in low_engagement_reasons else "nao_prendeu"
+                unit["engagement_risk_score"] = max(unit["engagement_risk_score"], 8.0)
+                unit["boring_or_confusing_score"] = max(unit["boring_or_confusing_score"], 8.0)
+                unit["recommended_version"] = False
+                unit["recommended_review_required"] = False
+                unit["not_recommended_reason"] = reason
+                if reason not in unit["failed_criteria"]:
+                    unit["failed_criteria"].append(reason)
+                unit["feedback_calibration_notes"].append(
+                    f"feedback: região parecida marcada como {reason}"
+                )
+                continue
+
+            if reason in strong_negative_reasons or strong_negative_overlap > positive_overlap + 0.10:
                 unit["engagement_risk_score"] = max(unit["engagement_risk_score"], 8.0)
                 unit["boring_or_confusing_score"] = max(unit["boring_or_confusing_score"], 8.0)
                 unit["recommended_version"] = False
@@ -537,6 +587,286 @@ class ClipAnalyzerService:
         unit["suggested_trim_strategy"] = (
             "keep hook and strongest development, avoid full long story"
         )
+
+    def _apply_ranking_and_trim(self, units: list[dict[str, Any]]) -> None:
+        for unit in units:
+            risk = self._long_incomplete_story_risk(unit)
+            unit["long_incomplete_story_risk"] = risk
+            if risk >= 7.0:
+                unit["recommended_version"] = False
+                unit["recommended_review_required"] = False
+                unit["not_recommended_reason"] = unit["not_recommended_reason"] or "historia_longa_incompleta_risk"
+                if "historia_longa_incompleta_risk" not in unit["failed_criteria"]:
+                    unit["failed_criteria"].append("historia_longa_incompleta_risk")
+            if unit.get("needs_trim"):
+                self._suggest_trim(unit)
+            ranking_score, tier, reason = self._ranking_quality(unit)
+            unit["ranking_quality_score"] = ranking_score
+            unit["ranking_quality_tier"] = tier
+            unit["ranking_reason"] = reason
+
+    def _ranking_quality(self, unit: dict[str, Any]) -> tuple[float, str, str]:
+        score = 0.0
+        reasons: list[str] = []
+        score += unit.get("reference_alignment_score", 0) * 0.22
+        score += unit.get("standalone_score", 0) * 0.16
+        score += unit.get("narrative_quality_score", 0) * 0.16
+        score += unit.get("story_completion_score", 0) * 0.14
+        score += unit.get("thought_closure_score", 0) * 0.12
+        score += unit.get("content_density_score", 0) * 0.12
+        score += max(0.0, 10.0 - unit.get("false_full_thought_risk", 10)) * 0.08
+
+        notes = " ".join(unit.get("feedback_calibration_notes", [])).lower()
+        similarity = str(unit.get("feedback_similarity_reason", ""))
+        if "perfeito" in notes or "muito_bom" in notes or "otimo" in notes:
+            score += 1.0
+            reasons.append("strong positive feedback")
+        elif "bom_nao_otimo" in notes or "bom, mas não ótimo" in similarity:
+            score += 0.2
+            reasons.append("bom_nao_otimo")
+        elif "bom" in notes:
+            score += 0.45
+            reasons.append("moderate positive feedback")
+        if "baixo alinhamento" not in similarity:
+            score += 0.25
+            reasons.append("benchmark alignment")
+
+        if unit.get("false_full_thought_risk", 0) > 4:
+            score -= 0.7
+            reasons.append("false_full_thought_risk")
+        if unit.get("contains_multiple_thoughts") and unit.get("thought_closure_score", 0) < 8:
+            score -= 0.6
+            reasons.append("multiple thoughts")
+        if unit.get("duration", 0) > 110 and unit.get("narrative_quality_score", 0) < 7:
+            score -= 0.9
+            reasons.append("long without strong narrative")
+        if unit.get("needs_trim") and not unit.get("suggested_trim_start_seconds"):
+            score -= 0.8
+            reasons.append("needs trim without suggestion")
+        if unit.get("ends_with_unanswered_question"):
+            score -= 2.5
+            reasons.append("unanswered question")
+        if unit.get("rejected_content_reason") or unit.get("non_content_score", 0) > 0:
+            score -= 4.0
+            reasons.append("non-content")
+        if unit.get("engagement_risk_score", 0) >= 7 or unit.get("boring_or_confusing_score", 0) >= 7:
+            score -= 3.0
+            reasons.append("engagement risk")
+        if unit.get("long_incomplete_story_risk", 0) >= 7:
+            score -= 3.0
+            reasons.append("historia_longa_incompleta_risk")
+
+        score = max(0.0, min(10.0, round(score, 2)))
+        if score >= 8.2:
+            tier = "excellent"
+        elif score >= 6.7:
+            tier = "good"
+        elif score >= 5.2:
+            tier = "review"
+        else:
+            tier = "weak"
+        if "bom_nao_otimo" in notes or "bom, mas não ótimo" in similarity:
+            tier = "good" if score >= 6.7 else tier
+            if tier == "excellent":
+                tier = "good"
+        return score, tier, "; ".join(reasons[:5]) or "balanced heuristic ranking"
+
+    @staticmethod
+    def _long_incomplete_story_risk(unit: dict[str, Any]) -> float:
+        risk = 0.0
+        if unit.get("duration", 0) > 90:
+            risk += 2.0
+        if unit.get("contains_multiple_thoughts"):
+            risk += 2.0
+        if unit.get("narrative_quality_score", 0) < 7:
+            risk += 1.5
+        if unit.get("false_full_thought_risk", 0) > 4:
+            risk += 1.5
+        if str(unit.get("ending_type", "")) in {"new_topic_started", "incomplete", "cut_by_limit"}:
+            risk += 1.0
+        notes = " ".join(unit.get("feedback_calibration_notes", [])).lower()
+        if "historia_longa_incompleta" in notes:
+            risk += 4.0
+        return max(0.0, min(10.0, round(risk, 2)))
+
+    def _source_quality_score(
+        self,
+        units: list[dict[str, Any]],
+        video_metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        video_id = str(video_metadata.get("video_id") or "")
+        feedback = self.feedback_calibration_service.source_feedback_by_video(video_id)
+
+        feedback_score = feedback.source_quality_score_from_feedback
+        score = feedback_score if feedback.total_reviews else 5.8
+        reasons: list[str] = []
+        warnings: list[str] = []
+        if feedback.total_reviews:
+            reasons.append(
+                "feedback: "
+                f"{feedback.approved_count} approved, {feedback.rejected_count} rejected, "
+                f"avg={feedback.average_rating}"
+            )
+            if feedback.weak_source_feedback_count:
+                warnings.append(
+                    f"{feedback.weak_source_feedback_count} feedbacks indicam fonte fraca"
+                )
+            if feedback.source_quality_reasons:
+                reasons.extend(feedback.source_quality_reasons[:5])
+
+        if units:
+            avg_density = sum(float(unit.get("content_density_score") or 0.0) for unit in units) / len(units)
+            avg_standalone = sum(float(unit.get("standalone_score") or 0.0) for unit in units) / len(units)
+            high_standalone_count = sum(1 for unit in units if float(unit.get("standalone_score") or 0.0) >= 8)
+            non_content_count = sum(1 for unit in units if float(unit.get("non_content_score") or 0.0) >= 6)
+            long_story_count = sum(1 for unit in units if float(unit.get("long_incomplete_story_risk") or 0.0) >= 7)
+            false_risk_count = sum(1 for unit in units if float(unit.get("false_full_thought_risk") or 0.0) >= 6)
+            weak_density_count = sum(1 for unit in units if float(unit.get("content_density_score") or 0.0) < 4)
+
+            if avg_density >= 5.5:
+                score += 0.7
+                reasons.append("boa densidade média de fala")
+            if avg_standalone >= 7.5 or high_standalone_count >= 4:
+                score += 0.7
+                reasons.append("vários candidatos funcionam isolados")
+            if non_content_count:
+                score -= min(2.0, non_content_count * 0.55)
+                warnings.append(f"{non_content_count} candidatos com merchan/propaganda")
+            if long_story_count:
+                score -= min(2.5, long_story_count * 0.55)
+                warnings.append(f"{long_story_count} candidatos com história longa incompleta")
+            if false_risk_count:
+                score -= min(2.0, false_risk_count * 0.35)
+                warnings.append(f"{false_risk_count} candidatos com risco de falso pensamento completo")
+            if weak_density_count >= max(3, len(units) // 3):
+                score -= 1.0
+                warnings.append("muitos candidatos com baixa densidade de conteúdo")
+
+        if feedback.total_reviews and feedback.rejected_count == 0 and feedback.weak_source_feedback_count == 0:
+            score = max(score, feedback_score - 1.0)
+        if not feedback.total_reviews:
+            score = max(score, 4.8)
+        score = round(max(0.0, min(10.0, score)), 2)
+        if score >= 8.2:
+            tier = "excellent_source"
+        elif score >= 6.2:
+            tier = "good_source"
+        elif score >= 4.5:
+            tier = "review_source"
+        elif score >= 2.8:
+            tier = "weak_source"
+        else:
+            tier = "bad_source"
+
+        should_continue = tier != "bad_source"
+        if tier == "weak_source" and feedback.weak_source_feedback_count >= 2 and feedback.average_rating < 3.5:
+            should_continue = False
+
+        return {
+            "source_quality_score": score,
+            "source_quality_tier": tier,
+            "source_quality_reason": "; ".join(reasons[:6]) or "score calculado por métricas dos candidatos",
+            "source_quality_warning": "; ".join(warnings[:6]),
+            "should_continue_video_review": should_continue,
+            "last_feedback_average_rating": feedback.average_rating,
+            "rejected_clip_count": feedback.rejected_count,
+            "approved_clip_count": feedback.approved_count,
+            "weak_source_feedback_count": feedback.weak_source_feedback_count,
+        }
+
+    @staticmethod
+    def _apply_source_quality_decision(
+        units: list[dict[str, Any]],
+        source_quality: dict[str, Any],
+    ) -> None:
+        tier = source_quality.get("source_quality_tier")
+        for unit in units:
+            unit["source_quality_score"] = source_quality["source_quality_score"]
+            unit["source_quality_tier"] = tier
+            unit["source_quality_reason"] = source_quality["source_quality_reason"]
+            unit["source_quality_warning"] = source_quality["source_quality_warning"]
+            unit["should_continue_video_review"] = source_quality["should_continue_video_review"]
+            if tier == "bad_source":
+                unit["recommended_version"] = False
+                unit["recommended_review_required"] = False
+                unit["not_recommended_reason"] = "bad_source"
+                unit["failed_criteria"] = list(dict.fromkeys(unit.get("failed_criteria", []) + ["bad_source"]))
+            elif tier == "weak_source":
+                if (
+                    float(unit.get("ranking_quality_score") or 0.0) < 7.5
+                    or unit.get("rejected_content_reason")
+                    or float(unit.get("long_incomplete_story_risk") or 0.0) >= 7
+                    or float(unit.get("false_full_thought_risk") or 0.0) >= 6
+                ):
+                    unit["recommended_version"] = False
+                    unit["recommended_review_required"] = False
+                    unit["not_recommended_reason"] = "weak_source_limit"
+                    unit["failed_criteria"] = list(dict.fromkeys(unit.get("failed_criteria", []) + ["weak_source_limit"]))
+
+    def _suggest_trim(self, unit: dict[str, Any]) -> None:
+        segments = unit.get("_segments") or []
+        start = float(unit.get("start", 0.0))
+        end = float(unit.get("end", start))
+        duration = end - start
+        if duration <= 80 or not segments:
+            unit["suggested_trim_start_seconds"] = None
+            unit["suggested_trim_end_seconds"] = None
+            unit["suggested_trim_duration_seconds"] = None
+            unit["trim_confidence_score"] = 3.0
+            unit["trim_strategy"] = "keep original boundaries"
+            unit["trim_warning"] = "trim not needed or no segment data"
+            return
+
+        target_min = 45.0
+        target_max = 75.0
+        trim_start = start
+        if unit.get("context_before_score", 0) >= 6:
+            for segment in segments[:6]:
+                seg_text = str(segment.get("text", "")).strip().lower()
+                seg_start = float(segment.get("start", start))
+                if seg_start - start > 20:
+                    break
+                if len(seg_text.split()) >= 5 and not self._starts_weakly(seg_text):
+                    trim_start = seg_start
+                    break
+
+        desired_end = trim_start + min(target_max, max(target_min, duration * 0.65))
+        trim_end = min(end, desired_end)
+        best_end = None
+        for segment in segments:
+            seg_end = float(segment.get("end", trim_start))
+            if seg_end < trim_start + target_min:
+                continue
+            if seg_end > trim_start + target_max:
+                break
+            candidate_text = self._segments_text(
+                [
+                    item for item in segments
+                    if float(item.get("start", 0.0)) >= trim_start
+                    and float(item.get("end", 0.0)) <= seg_end
+                ]
+            )
+            if self._has_complete_thought_ending(candidate_text):
+                best_end = seg_end
+        if best_end is not None:
+            trim_end = best_end
+
+        trim_duration = max(0.0, trim_end - trim_start)
+        confidence = 7.0 if target_min <= trim_duration <= target_max else 4.0
+        warning = "" if confidence >= 6 else "no confident closure inside target trim duration"
+        unit["suggested_trim_start_seconds"] = round(trim_start, 2)
+        unit["suggested_trim_end_seconds"] = round(trim_end, 2)
+        unit["suggested_trim_duration_seconds"] = round(trim_duration, 2)
+        unit["trim_confidence_score"] = confidence
+        unit["trim_strategy"] = "keep hook and strongest development, end at nearest complete thought"
+        unit["trim_warning"] = warning
+
+    @staticmethod
+    def _starts_weakly(text: str) -> bool:
+        return text.startswith((
+            "é ", "e ", "aí", "ai", "então", "porque", "mas", "né",
+            "sim", "não", "no", "so", "but", "and", "yeah", "um",
+        ))
 
     def _suppress_duplicates(self, units: list[dict[str, Any]]) -> None:
         ordered = sorted(
@@ -1047,6 +1377,17 @@ class ClipAnalyzerService:
             "reason_for_duration": self._reason_for_duration(reported_clip_version, duration, is_podcast),
             "ending_type": ending_type,
             "context_expanded": context_expanded,
+            "_segments": segments,
+            "suggested_trim_start_seconds": None,
+            "suggested_trim_end_seconds": None,
+            "suggested_trim_duration_seconds": None,
+            "trim_confidence_score": 0.0,
+            "trim_strategy": "",
+            "trim_warning": "",
+            "ranking_quality_score": 0.0,
+            "ranking_quality_tier": "weak",
+            "ranking_reason": "",
+            "long_incomplete_story_risk": 0.0,
         }
 
     def _merge_hook_and_development(
@@ -1110,11 +1451,17 @@ class ClipAnalyzerService:
             )
         return merged
 
-    def _select_thought_units(self, units: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _select_thought_units(
+        self,
+        units: list[dict[str, Any]],
+        source_quality: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         candidates = sorted(
             units,
             key=lambda unit: (
                 unit["recommended_version"],
+                unit["ranking_quality_score"],
+                unit["ranking_quality_tier"] in {"excellent", "good"},
                 unit.get("feedback_similarity_reason", "") != "baixo alinhamento com benchmark de cortes bons",
                 unit["reference_alignment_score"],
                 unit["narrative_quality_score"],
@@ -1131,6 +1478,29 @@ class ClipAnalyzerService:
             reverse=True,
         )
         selected: list[dict[str, Any]] = []
+        source_tier = str((source_quality or {}).get("source_quality_tier", "review_source"))
+        max_by_source = {
+            "bad_source": 0,
+            "weak_source": 1,
+            "review_source": 2,
+            "good_source": 3,
+            "excellent_source": 4,
+        }.get(source_tier, 3)
+        max_selected = min(3, max_by_source)
+        high_quality_count = sum(
+            1
+            for candidate in candidates
+            if candidate["recommended_version"]
+            and candidate["ranking_quality_tier"] in {"excellent", "good"}
+            and candidate["ranking_quality_score"] >= 7.2
+            and not candidate["duplicate_suppressed"]
+            and candidate["engagement_risk_score"] < 7
+            and candidate["boring_or_confusing_score"] < 7
+        )
+        if source_tier == "excellent_source" and high_quality_count >= 4:
+            max_selected = 4
+        if max_selected <= 0:
+            return []
         for candidate in candidates:
             if candidate["duplicate_suppressed"]:
                 continue
@@ -1157,6 +1527,16 @@ class ClipAnalyzerService:
                 continue
             if candidate["non_content_score"] >= 6 and candidate["content_density_score"] < 8:
                 continue
+            if candidate["ranking_quality_tier"] == "weak":
+                continue
+            if candidate["long_incomplete_story_risk"] >= 7:
+                continue
+            if source_tier == "weak_source" and (
+                candidate["ranking_quality_score"] < 7.5
+                or candidate["false_full_thought_risk"] >= 6
+                or candidate["rejected_content_reason"]
+            ):
+                continue
             if candidate["weak_content"] and any(
                 self._same_region(candidate, other) and not other["weak_content"]
                 for other in candidates
@@ -1175,7 +1555,7 @@ class ClipAnalyzerService:
             if any(self._overlap_ratio(candidate, item) > 0.50 for item in selected):
                 continue
             selected.append(candidate)
-            if len(selected) >= 5:
+            if len(selected) >= max_selected:
                 break
         return selected
 

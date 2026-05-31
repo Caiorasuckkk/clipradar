@@ -24,6 +24,7 @@ def main() -> None:
     print(f"REVIEW GENERATED CLIPS — {args.video_id}")
     print(payload.get("video_title", ""))
     _print_language_warning(args.video_id, payload)
+    _print_source_quality(payload)
     if payload.get("analysis_note"):
         print(payload.get("analysis_note"))
     base_url = payload.get("url", "")
@@ -69,11 +70,18 @@ def main() -> None:
             f"promotion_reason={clip.get('promotion_reason')} "
             f"needs_trim={clip.get('needs_trim')}"
         )
+        print(
+            f"ranking={clip.get('ranking_quality_score')} "
+            f"tier={clip.get('ranking_quality_tier')} "
+            f"long_story_risk={clip.get('long_incomplete_story_risk')}"
+        )
+        print(f"ranking_reason={clip.get('ranking_reason')}")
         if clip.get("needs_trim"):
             print(
                 f"trim_reason={clip.get('trim_reason')} "
                 f"strategy={clip.get('suggested_trim_strategy')}"
             )
+            print(_trim_line(clip))
         print(
             f"engagement_risk={clip.get('engagement_risk_score')} "
             f"boring_or_confusing={clip.get('boring_or_confusing_score')} "
@@ -135,11 +143,18 @@ def main() -> None:
                 f"promotion_reason={candidate.get('promotion_reason')} "
                 f"needs_trim={candidate.get('needs_trim')}"
             )
+            print(
+                f"ranking={candidate.get('ranking_quality_score')} "
+                f"tier={candidate.get('ranking_quality_tier')} "
+                f"long_story_risk={candidate.get('long_incomplete_story_risk')}"
+            )
+            print(f"ranking_reason={candidate.get('ranking_reason')}")
             if candidate.get("needs_trim"):
                 print(
                     f"trim_reason={candidate.get('trim_reason')} "
                     f"strategy={candidate.get('suggested_trim_strategy')}"
                 )
+                print(_trim_line(candidate))
             print(
                 f"engagement_risk={candidate.get('engagement_risk_score')} "
                 f"boring_or_confusing={candidate.get('boring_or_confusing_score')} "
@@ -168,6 +183,49 @@ def _display(value: object, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rsplit(" ", 1)[0] + "..."
+
+
+def _trim_line(item: dict[str, object]) -> str:
+    start = item.get("suggested_trim_start_seconds")
+    end = item.get("suggested_trim_end_seconds")
+    duration = item.get("suggested_trim_duration_seconds")
+    confidence = item.get("trim_confidence_score")
+    strategy = item.get("trim_strategy")
+    warning = item.get("trim_warning")
+    if start is None or end is None:
+        return (
+            f"suggested trim: unavailable | confidence={confidence} "
+            f"strategy={strategy} warning={warning}"
+        )
+    return (
+        f"suggested trim: {_mmss(float(start))} até {_mmss(float(end))} "
+        f"({duration}s) | confidence={confidence} strategy={strategy} warning={warning}"
+    )
+
+
+def _print_source_quality(payload: dict) -> None:
+    summary = dict(payload.get("analysis_summary") or {})
+    score = payload.get("source_quality_score", summary.get("source_quality_score"))
+    tier = payload.get("source_quality_tier", summary.get("source_quality_tier"))
+    reason = payload.get("source_quality_reason", summary.get("source_quality_reason", ""))
+    warning = payload.get("source_quality_warning", summary.get("source_quality_warning", ""))
+    continue_review = payload.get(
+        "should_continue_video_review",
+        summary.get("should_continue_video_review", True),
+    )
+    if score is None and not tier:
+        return
+    print(f"source quality: {score} / {tier}")
+    print(f"source reason: {reason}")
+    if warning:
+        print(f"source warning: {warning}")
+    print(f"continue review: {continue_review}")
+
+
+def _mmss(seconds: float) -> str:
+    total = max(0, int(round(seconds)))
+    minutes, secs = divmod(total, 60)
+    return f"{minutes}:{secs:02d}"
 
 
 def _print_language_warning(video_id: str, payload: dict) -> None:

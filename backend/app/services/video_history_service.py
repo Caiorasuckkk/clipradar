@@ -125,6 +125,32 @@ class VideoHistoryService:
     def mark_needs_manual_review(self, video_id: str) -> None:
         self._set_status(video_id, "needs_manual_review")
 
+    def mark_source_rejected(self, video_id: str) -> None:
+        self._set_status(video_id, "source_rejected")
+
+    def mark_weak_source_reviewed(self, video_id: str) -> None:
+        self._set_status(video_id, "weak_source_reviewed")
+
+    def update_source_quality(self, video_id: str, summary: dict[str, Any]) -> None:
+        data = self._read()
+        item = data.get(video_id, {"video_id": video_id})
+        for key in (
+            "source_quality_score",
+            "source_quality_tier",
+            "source_quality_reason",
+            "last_feedback_average_rating",
+            "rejected_clip_count",
+            "approved_clip_count",
+            "weak_source_feedback_count",
+            "should_continue_video_review",
+        ):
+            if key in summary:
+                item[key] = summary[key]
+        item["should_reprocess"] = False
+        item["updated_at"] = self._now()
+        data[video_id] = item
+        self._write(data)
+
     def mark_rejected_queue(self, video_id: str, reason: str) -> None:
         data = self._read()
         item = data.get(video_id, {"video_id": video_id})

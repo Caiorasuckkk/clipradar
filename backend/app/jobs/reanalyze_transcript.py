@@ -32,6 +32,7 @@ def main() -> None:
     clips = analysis["clips"]
     diagnostic_candidates = analysis["diagnostic_candidates"]
     analysis_summary = analysis["analysis_summary"]
+    history.update_source_quality(video_id, analysis_summary)
 
     output_path = save_clips(video_id, video, clips, diagnostic_candidates, analysis_summary)
     print(f"REANALYZE concluído: {video_id}")
@@ -39,6 +40,12 @@ def main() -> None:
     print(f"Diagnostic candidates: {len(diagnostic_candidates)}")
     if analysis_summary.get("reason"):
         print(f"Motivo principal: {analysis_summary['reason']}")
+    print(
+        "Source quality: "
+        f"{analysis_summary.get('source_quality_score')} / "
+        f"{analysis_summary.get('source_quality_tier')} | "
+        f"continue_review={analysis_summary.get('should_continue_video_review')}"
+    )
     print(f"Output: {output_path}")
     print("")
     print("Novos timestamps:")
@@ -85,6 +92,11 @@ def save_clips(
         "processed_at": datetime.utcnow().isoformat(),
         "analysis_note": analysis_summary.get("reason", ""),
         "analysis_summary": analysis_summary,
+        "source_quality_score": analysis_summary.get("source_quality_score"),
+        "source_quality_tier": analysis_summary.get("source_quality_tier"),
+        "source_quality_reason": analysis_summary.get("source_quality_reason", ""),
+        "source_quality_warning": analysis_summary.get("source_quality_warning", ""),
+        "should_continue_video_review": analysis_summary.get("should_continue_video_review", True),
         "clips": clips,
         "diagnostic_candidates": diagnostic_candidates,
     }

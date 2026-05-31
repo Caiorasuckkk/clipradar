@@ -12,16 +12,34 @@ from app import config
 
 POSITIVE_REASONS = {
     "otimo", "bom", "perfeito", "bom_final_engracado", "muito_bom",
-    "otimo_mas_longo",
+    "otimo_mas_longo", "bom_nao_otimo",
 }
 EXTEND_END_REASONS = {
     "otimo_final_curto", "bom_mas_curto", "bom_com_ajuste",
 }
 POSITIVE_ADJUSTMENT_REASONS = EXTEND_END_REASONS | {"otimo_mas_longo"}
 STRONG_POSITIVE_REASONS = {"muito_bom", "perfeito", "otimo"}
+MODERATE_POSITIVE_REASONS = {"bom", "bom_nao_otimo", "bom_final_engracado"}
 DUPLICATE_REASONS = {"duplicado_versao_inferior"}
 LOW_ENGAGEMENT_REASONS = {"nao_prendeu", "sem_sentido", "nada_com_nada"}
-INCOMPLETE_ENDING_REASONS = {"nao_fechou_bem", "final_sem_contexto", "pergunta_sem_resposta"}
+INCOMPLETE_ENDING_REASONS = {
+    "nao_fechou_bem", "final_sem_contexto", "pergunta_sem_resposta",
+    "historia_longa_incompleta",
+}
+STRONG_NEGATIVE_REASONS = {
+    "nao_prendeu", "sem_sentido", "nada_com_nada", "nao_gostei",
+    "historia_longa_incompleta", "propaganda_produto", "sem_contexto_ruim",
+    "nao_gostei_video_fraco",
+}
+SOURCE_NEGATIVE_REASONS = {
+    "sem_contexto_ruim", "nao_gostei_video_fraco", "historia_longa_incompleta",
+    "nao_gostei", "nao_prendeu", "sem_sentido", "nada_com_nada",
+}
+SOURCE_WEAK_REASONS = {
+    "bom_mas_video_fraco", "historia_longa_incompleta", "final_sem_contexto",
+    "nao_fechou_bem",
+}
+SOURCE_QUALITY_WARNING_REASONS = SOURCE_NEGATIVE_REASONS | SOURCE_WEAK_REASONS
 NEGATIVE_REASONS = {
     "propaganda_produto",
     "nada_com_nada",
@@ -32,6 +50,11 @@ NEGATIVE_REASONS = {
     "duplicado_versao_inferior",
     "nao_fechou_bem",
     "final_sem_contexto",
+    "historia_longa_incompleta",
+    "nao_gostei",
+    "sem_contexto_ruim",
+    "nao_gostei_video_fraco",
+    "bom_mas_video_fraco",
 }
 
 
@@ -51,10 +74,31 @@ class FeedbackCalibration:
     low_engagement_reasons: list[str]
     strong_positive_reasons: list[str]
     positive_strong_reasons: list[str]
+    moderate_positive_reasons: list[str]
     positive_adjustment_reasons: list[str]
+    trim_positive_reasons: list[str]
     negative_engagement_reasons: list[str]
+    strong_negative_reasons: list[str]
     incomplete_ending_reasons: list[str]
+    incomplete_story_reasons: list[str]
     needs_adjustment_reasons: list[str]
+    source_negative_reasons: list[str]
+    source_weak_reasons: list[str]
+    source_quality_warning_reasons: list[str]
+
+
+@dataclass
+class SourceFeedbackStats:
+    video_id: str
+    total_reviews: int
+    approved_count: int
+    rejected_count: int
+    needs_adjustment_count: int
+    average_rating: float
+    rejection_rate: float
+    weak_source_feedback_count: int
+    source_quality_score_from_feedback: float
+    source_quality_reasons: list[str]
 
 
 class FeedbackCalibrationService:
@@ -121,10 +165,17 @@ class FeedbackCalibrationService:
             low_engagement_reasons=sorted(LOW_ENGAGEMENT_REASONS & set(reason_counts)),
             strong_positive_reasons=sorted(STRONG_POSITIVE_REASONS & set(reason_counts)),
             positive_strong_reasons=sorted(STRONG_POSITIVE_REASONS & set(reason_counts)),
+            moderate_positive_reasons=sorted(MODERATE_POSITIVE_REASONS & set(reason_counts)),
             positive_adjustment_reasons=sorted(POSITIVE_ADJUSTMENT_REASONS & set(reason_counts)),
+            trim_positive_reasons=sorted(POSITIVE_ADJUSTMENT_REASONS & set(reason_counts)),
             negative_engagement_reasons=sorted(LOW_ENGAGEMENT_REASONS & set(reason_counts)),
+            strong_negative_reasons=sorted(STRONG_NEGATIVE_REASONS & set(reason_counts)),
             incomplete_ending_reasons=sorted(INCOMPLETE_ENDING_REASONS & set(reason_counts)),
+            incomplete_story_reasons=sorted({"historia_longa_incompleta"} & set(reason_counts)),
             needs_adjustment_reasons=sorted(POSITIVE_ADJUSTMENT_REASONS & set(reason_counts)),
+            source_negative_reasons=sorted(SOURCE_NEGATIVE_REASONS & set(reason_counts)),
+            source_weak_reasons=sorted(SOURCE_WEAK_REASONS & set(reason_counts)),
+            source_quality_warning_reasons=sorted(SOURCE_QUALITY_WARNING_REASONS & set(reason_counts)),
         )
 
     def analyzer_recommendations(self) -> list[str]:
@@ -150,7 +201,43 @@ class FeedbackCalibrationService:
             recommendations.append("Promover bons candidatos com ajuste manual como review_required/needs_trim.")
         if calibration.incomplete_ending_reasons:
             recommendations.append("Manter em diagnostics candidatos com risco de final sem fechamento.")
+        if calibration.strong_negative_reasons:
+            recommendations.append("Rebaixar ranking de nao_gostei/nao_prendeu/historia_longa_incompleta.")
+        if calibration.trim_positive_reasons:
+            recommendations.append("Gerar suggested trim para cortes bons, mas longos.")
+        if calibration.source_quality_warning_reasons:
+            recommendations.append("Usar feedback por vídeo para limitar recomendações de fontes fracas.")
         return recommendations
+
+    def source_feedback_by_video(self, video_id: str) -> SourceFeedbackStats:
+        return self.source_feedback_summary().get(video_id, self._empty_source_stats(video_id))
+
+    def source_feedback_summary(self) -> dict[str, SourceFeedbackStats]:
+        paths = sorted(self.reports_dir.glob("feedback_dataset_*.json"), reverse=True)
+        if not paths:
+            return {}
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        # Use the newest exported feedback available per video. This keeps the
+        # latest dataset authoritative for newly reviewed videos while preserving
+        # source-quality knowledge for videos omitted from a later export.
+        for path in paths:
+            try:
+                with path.open("r", encoding="utf-8") as file:
+                    payload = json.load(file)
+            except Exception:
+                continue
+            by_video: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for clip in payload.get("clips", []):
+                video_id = str(clip.get("video_id") or "")
+                if video_id and video_id not in grouped:
+                    by_video[video_id].append(clip)
+            grouped.update({video_id: clips for video_id, clips in by_video.items() if clips})
+
+        return {
+            video_id: self._source_stats_from_clips(video_id, clips)
+            for video_id, clips in grouped.items()
+        }
 
     def positive_ranges_for_video(self, video_id: str) -> list[dict[str, Any]]:
         path = self.latest_dataset_path()
@@ -236,8 +323,88 @@ class FeedbackCalibrationService:
             low_engagement_reasons=[],
             strong_positive_reasons=[],
             positive_strong_reasons=[],
+            moderate_positive_reasons=[],
             positive_adjustment_reasons=[],
+            trim_positive_reasons=[],
             negative_engagement_reasons=[],
+            strong_negative_reasons=[],
             incomplete_ending_reasons=[],
+            incomplete_story_reasons=[],
             needs_adjustment_reasons=[],
+            source_negative_reasons=[],
+            source_weak_reasons=[],
+            source_quality_warning_reasons=[],
+        )
+
+    @staticmethod
+    def _source_stats_from_clips(video_id: str, clips: list[dict[str, Any]]) -> SourceFeedbackStats:
+        total = len(clips)
+        approved = sum(1 for clip in clips if clip.get("review_status") == "approved")
+        rejected = sum(1 for clip in clips if clip.get("review_status") == "rejected")
+        needs_adjustment = sum(1 for clip in clips if clip.get("review_status") == "needs_adjustment")
+        ratings: list[float] = []
+        reasons = Counter()
+        weak_count = 0
+        for clip in clips:
+            reason = str(clip.get("review_reason") or "")
+            if reason:
+                reasons[reason] += 1
+            if reason in SOURCE_QUALITY_WARNING_REASONS:
+                weak_count += 1
+            rating = clip.get("review_rating")
+            if rating is not None:
+                try:
+                    ratings.append(float(rating))
+                except (TypeError, ValueError):
+                    pass
+
+        average_rating = round(mean(ratings), 2) if ratings else 0.0
+        rejection_rate = round(rejected / total, 2) if total else 0.0
+        score = 5.0
+        score += approved * 0.45
+        score += needs_adjustment * 0.15
+        score -= rejected * 0.9
+        score -= weak_count * 1.15
+        if ratings:
+            score += (average_rating - 3.0) * 1.4
+        score -= rejection_rate * 2.0
+        if reasons.get("bom_mas_video_fraco"):
+            score -= 1.4
+        if reasons.get("nao_gostei_video_fraco") or reasons.get("sem_contexto_ruim"):
+            score -= 2.0
+        if reasons.get("historia_longa_incompleta"):
+            score -= 1.2
+        if reasons.get("otimo") or reasons.get("perfeito") or reasons.get("muito_bom"):
+            score += 0.8
+        source_reasons = [
+            f"{reason}:{count}"
+            for reason, count in reasons.most_common()
+            if reason in SOURCE_QUALITY_WARNING_REASONS or reason in POSITIVE_REASONS
+        ]
+        return SourceFeedbackStats(
+            video_id=video_id,
+            total_reviews=total,
+            approved_count=approved,
+            rejected_count=rejected,
+            needs_adjustment_count=needs_adjustment,
+            average_rating=average_rating,
+            rejection_rate=rejection_rate,
+            weak_source_feedback_count=weak_count,
+            source_quality_score_from_feedback=round(max(0.0, min(10.0, score)), 2),
+            source_quality_reasons=source_reasons,
+        )
+
+    @staticmethod
+    def _empty_source_stats(video_id: str) -> SourceFeedbackStats:
+        return SourceFeedbackStats(
+            video_id=video_id,
+            total_reviews=0,
+            approved_count=0,
+            rejected_count=0,
+            needs_adjustment_count=0,
+            average_rating=0.0,
+            rejection_rate=0.0,
+            weak_source_feedback_count=0,
+            source_quality_score_from_feedback=5.0,
+            source_quality_reasons=[],
         )
