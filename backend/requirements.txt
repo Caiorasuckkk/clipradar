@@ -1,6 +1,8 @@
 python-dotenv
 requests
 feedparser
+fastapi
+uvicorn[standard]
 pytrends
 google-api-python-client
 pydantic

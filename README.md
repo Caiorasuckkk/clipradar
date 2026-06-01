@@ -244,6 +244,39 @@ By default, missing source videos are still reported as `missing_source`. To all
 
 This downloads the source to `backend/app/storage/videos/{video_id}.mp4`, then renders the approved clip. It does not run Whisper, transcribe, call OpenAI, or publish anything.
 
+## ClipRadar 0.5.21 - Local Review API
+
+Start the local API from the backend directory:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.main
+```
+
+The API lists rendered `.mp4` clips from `backend/app/storage/exports`, serves them locally, and saves manual swipe-style reviews to `backend/app/storage/reviews/rendered_clip_reviews.json`. It does not download media, render clips, run Whisper, call OpenAI, or publish anything.
+
+Endpoints:
+
+```text
+GET  /review/clips
+GET  /review/clips/next
+GET  /review/clips/{clip_id}
+GET  /exports/{filename}
+POST /review/clips/{clip_id}
+GET  /review/summary
+```
+
+Example review:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/review/clips/Jc9Ydqmjcew__rank_2__rating_5__otimo__2216_2270" -ContentType "application/json" -Body '{"status":"approved","rating":5,"reason":"otimo","notes":"Corte aprovado no app local","ideal_start_seconds":null,"ideal_end_seconds":null}'
+```
+
+Export rendered reviews for future dataset integration:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.export_rendered_reviews_dataset
+```
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

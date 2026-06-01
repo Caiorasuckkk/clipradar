@@ -13,6 +13,8 @@ backend/app/storage/cache/**/*.json
 backend/app/storage/cache/yt_trending_debug.html
 backend/app/storage/cache/ffmpeg/*
 backend/app/storage/downloads/*
+backend/app/storage/exports/*
+backend/app/storage/reviews/*
 backend/app/storage/transcripts/*
 backend/app/storage/transcripts/*.json
 backend/app/storage/clips/*
