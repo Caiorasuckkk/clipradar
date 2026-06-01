@@ -417,6 +417,18 @@ Create a manual posting package with only final clips marked as `ready_to_post`:
 
 The job reads `backend/app/storage/final_exports` plus `backend/app/storage/final_reviews/final_clip_reviews.json`, copies only approved final clips into `backend/app/storage/posting_package/YYYYMMDD_HHMM/videos`, and writes package-level JSON/Markdown plus individual metadata files. It does not publish automatically and does not use OpenAI, Whisper, FFmpeg, downloads, YouTube, or rendering.
 
+## ClipRadar 0.5.30 - Pipeline Command Orchestrator
+
+Run the ready-to-post preparation pipeline from one command:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.pipeline_ready_to_post --dry-run --limit 1
+.\.ven\Scripts\python.exe -m app.jobs.pipeline_ready_to_post --limit 1 --download-missing --overwrite --package-name test_pipeline
+.\.ven\Scripts\python.exe -m app.jobs.pipeline_ready_to_post --download-missing --overwrite
+```
+
+The pipeline executes the existing jobs in order: approved plan export, approved clip render, vertical render, clean final export, final metadata export, and ready-to-post package export. It does not publish, does not use OpenAI or Whisper, and does not run the subtitle pipeline. Start with `--dry-run --limit 1` to inspect the commands before running actual rendering/copying.
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:
