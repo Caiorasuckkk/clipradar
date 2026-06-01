@@ -473,6 +473,22 @@ adb reverse tcp:8000 tcp:8000
 flutter run -d 4eb16e24 --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ```
 
+## ClipRadar 0.5.32 - Batch Status + Retry + Cleanup
+
+Use the batch status and retry tools to operate local review batches without guessing which step is stale:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.batch_status
+.\.ven\Scripts\python.exe -m app.jobs.list_candidate_preview_status --missing-only
+.\.ven\Scripts\python.exe -m app.jobs.render_candidate_previews --only-missing --download-missing --overwrite --max-missing 5
+.\.ven\Scripts\python.exe -m app.jobs.list_failed_candidate_downloads
+.\.ven\Scripts\python.exe -m app.jobs.render_candidate_previews --retry-failed --download-missing --overwrite --clean-partials
+.\.ven\Scripts\python.exe -m app.jobs.export_ready_to_post_package --package-name latest
+.\.ven\Scripts\python.exe -m app.jobs.export_ready_to_post_package --clean-old
+```
+
+`batch_status` summarizes candidate queue health, preview availability, review counts, rendered exports, final review counts, the latest posting package, recent reports, and tracked failed downloads. Candidate preview downloads now retry with simple backoff, can clean `.part`/`.ytdl` files for selected videos, and write failures to `backend/app/storage/reports/failed_candidate_downloads.json`. `export_ready_to_post_package --package-name latest` writes a stable `posting_package/latest` folder, while `--clean-old` removes old package folders safely inside `backend/app/storage/posting_package`.
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

@@ -70,6 +70,7 @@ def main() -> None:
             break
 
     finished_at = datetime.utcnow().isoformat()
+    package_summary = _latest_ready_to_post_package_summary()
     payload = {
         "started_at": started_at,
         "finished_at": finished_at,
@@ -80,6 +81,8 @@ def main() -> None:
         "steps_ok": sum(1 for item in results if item["status"] == "ok"),
         "steps_skipped": sum(1 for item in results if item["status"] in {"skipped", "dry_run"}),
         "steps_failed": sum(1 for item in results if item["status"] == "error"),
+        "posting_package_path": package_summary.get("package_dir"),
+        "total_ready_to_post": package_summary.get("total_ready_to_post"),
         "steps": results,
     }
     report_paths = _write_report(payload)
@@ -92,6 +95,8 @@ def main() -> None:
     print(f"started_at: {started_at}")
     print(f"finished_at: {finished_at}")
     print(f"elapsed_seconds: {payload['elapsed_seconds']}")
+    print(f"posting_package_path: {payload['posting_package_path']}")
+    print(f"total_ready_to_post: {payload['total_ready_to_post']}")
     print(f"JSON: {report_paths['json']}")
     print(f"Markdown: {report_paths['md']}")
 
@@ -251,6 +256,24 @@ def _latest_rendered_output(pattern: str) -> str | None:
     return None
 
 
+def _latest_ready_to_post_package_summary() -> dict[str, Any]:
+    reports_dir = config.STORAGE_TRENDS_DIR.parent / "reports"
+    paths = sorted(reports_dir.glob("ready_to_post_package_*.json"))
+    if not paths:
+        return {}
+    try:
+        with paths[-1].open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "package_dir": payload.get("package_dir"),
+        "total_ready_to_post": payload.get("total_ready_to_post"),
+    }
+
+
 def _run_step(step: Step) -> Step:
     started_at = datetime.utcnow().isoformat()
     started_perf = time.perf_counter()
@@ -345,6 +368,8 @@ def _markdown_report(payload: dict[str, Any]) -> str:
         f"Steps OK: {payload['steps_ok']}",
         f"Steps skipped: {payload['steps_skipped']}",
         f"Steps failed: {payload['steps_failed']}",
+        f"Posting package: {payload.get('posting_package_path')}",
+        f"Total ready to post: {payload.get('total_ready_to_post')}",
         "",
         "## Steps",
         "",

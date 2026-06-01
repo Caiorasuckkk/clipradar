@@ -34,6 +34,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--package-name")
+    parser.add_argument("--clean-old", action="store_true")
     args = parser.parse_args()
 
     exported_at = datetime.utcnow().isoformat()
@@ -110,8 +111,20 @@ def main() -> None:
         _write_json(package_dir / "posting_package.json", payload)
         (package_dir / "posting_package.md").write_text(_markdown_package(payload), encoding="utf-8")
 
+    cleaned_packages: list[str] = []
+    if args.clean_old and not args.dry_run:
+        cleaned_packages = _clean_old_packages(keep_package_id=package_id)
+        payload["cleaned_old_packages"] = cleaned_packages
+        _write_json(package_dir / "posting_package.json", payload)
+        (package_dir / "posting_package.md").write_text(_markdown_package(payload), encoding="utf-8")
+    else:
+        payload["cleaned_old_packages"] = []
     report_paths = _write_reports(payload)
     _print_summary(payload, report_paths)
+    if cleaned_packages:
+        print("Cleaned old packages:")
+        for path in cleaned_packages:
+            print(f"- {path}")
 
 
 def _package_item(
@@ -224,6 +237,32 @@ def _package_id(package_name: str | None) -> str:
     return datetime.now().strftime("%Y%m%d_%H%M")
 
 
+def _clean_old_packages(keep_package_id: str) -> list[str]:
+    root = config.STORAGE_POSTING_PACKAGE_DIR.resolve()
+    if not root.exists():
+        return []
+    package_dirs = [
+        path
+        for path in root.iterdir()
+        if path.is_dir() and path.resolve().parent == root
+    ]
+    timestamp_dirs = [path for path in package_dirs if path.name != "latest"]
+    newest_timestamp = max(timestamp_dirs, key=lambda path: path.stat().st_mtime, default=None)
+    keep_names = {"latest", keep_package_id}
+    if newest_timestamp:
+        keep_names.add(newest_timestamp.name)
+    removed: list[str] = []
+    for path in package_dirs:
+        resolved = path.resolve()
+        if path.name in keep_names:
+            continue
+        if resolved.parent != root:
+            continue
+        shutil.rmtree(resolved)
+        removed.append(str(resolved))
+    return removed
+
+
 def _write_reports(payload: dict[str, Any]) -> dict[str, str]:
     reports_dir = config.STORAGE_TRENDS_DIR.parent / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -242,6 +281,7 @@ def _markdown_package(payload: dict[str, Any]) -> str:
         f"Package: {payload['package_id']}",
         f"Total: {payload['total_ready_to_post']}",
         f"Videos dir: {payload['videos_dir']}",
+        f"Cleaned old packages: {len(payload.get('cleaned_old_packages') or [])}",
         "",
     ]
     for item in payload["items"]:

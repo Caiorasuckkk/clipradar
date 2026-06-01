@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from app.services.candidate_review_service import QUEUE_PATH
 
 
 SOURCE_EXTENSIONS = (".mp4", ".mkv", ".webm", ".mov")
+FAILED_DOWNLOADS_PATH = config.STORAGE_TRENDS_DIR.parent / "reports" / "failed_candidate_downloads.json"
 
 
 def main() -> None:
@@ -28,9 +30,18 @@ def main() -> None:
     parser.add_argument("--download-missing", action="store_true")
     parser.add_argument("--only-missing", action="store_true")
     parser.add_argument("--max-missing", type=int)
+    parser.add_argument("--retry-failed", action="store_true")
+    parser.add_argument("--clean-partials", action="store_true")
     args = parser.parse_args()
 
     items = _load_queue_items()
+    if args.retry_failed:
+        failed_ids = {
+            str(item.get("candidate_id") or "")
+            for item in _load_failed_downloads()
+            if item.get("candidate_id")
+        }
+        items = [item for item in items if str(item.get("candidate_id") or "") in failed_ids]
     if args.video_id:
         items = [item for item in items if str(item.get("video_id") or "") == args.video_id]
     if args.candidate_id:
@@ -43,6 +54,9 @@ def main() -> None:
         items = items[: max(0, args.limit)]
 
     config.STORAGE_CANDIDATE_PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    if args.clean_partials:
+        removed = _clean_partials_for_items(items)
+        print(f"Cleaned partial files: {removed}")
     results: list[dict[str, Any]] = []
     interrupted = False
     try:
@@ -119,11 +133,19 @@ def _render_item(
     }
     source_path, _reason = _find_source_video(video_id)
     if not source_path and download_missing and not dry_run:
-        source_path, error = _download_missing_source(video_id, str(item.get("youtube_url") or ""))
+        source_path, error, retry_count = _download_missing_source(video_id, str(item.get("youtube_url") or ""))
         if source_path:
             result["downloaded_missing_source"] = True
         else:
             result["error_message"] = error
+            result["download_retry_count"] = retry_count
+            _record_failed_download(
+                video_id=video_id,
+                candidate_id=candidate_id,
+                youtube_url=str(item.get("youtube_url") or ""),
+                error_message=error,
+                retry_count=retry_count,
+            )
     if not source_path:
         result["status"] = "missing_source"
         result["error_message"] = result["error_message"] or "fonte local não encontrada; use --download-missing"
@@ -158,6 +180,7 @@ def _render_item(
         result["error_message"] = (completed.stderr or completed.stdout or "").strip()[:1000]
         return result
     result["status"] = "rendered"
+    _clear_failed_download(video_id=video_id, candidate_id=candidate_id)
     return result
 
 
@@ -188,13 +211,13 @@ def _find_source_video(video_id: str) -> tuple[Path | None, str]:
     return None, "not_found"
 
 
-def _download_missing_source(video_id: str, youtube_url: str) -> tuple[Path | None, str]:
+def _download_missing_source(video_id: str, youtube_url: str, max_attempts: int = 3) -> tuple[Path | None, str, int]:
     if not youtube_url:
-        return None, "youtube_url ausente"
+        return None, "youtube_url ausente", 0
     try:
         from yt_dlp import YoutubeDL
     except Exception as exc:
-        return None, f"yt-dlp indisponível: {exc}"
+        return None, f"yt-dlp indisponível: {exc}", 0
     config.STORAGE_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
     options = {
         "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/best",
@@ -204,15 +227,101 @@ def _download_missing_source(video_id: str, youtube_url: str) -> tuple[Path | No
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "noprogress": True,
     }
-    try:
-        with YoutubeDL(options) as downloader:
-            code = downloader.download([youtube_url])
-        if code:
-            return None, f"yt-dlp retornou {code}"
-    except Exception as exc:
-        return None, str(exc)
-    return _find_source_video(video_id)[0], ""
+    last_error = ""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with YoutubeDL(options) as downloader:
+                code = downloader.download([youtube_url])
+            if code:
+                last_error = f"yt-dlp retornou {code}"
+            else:
+                source_path = _find_source_video(video_id)[0]
+                if source_path:
+                    return source_path, "", attempt
+                last_error = "download concluído, mas fonte local não encontrada"
+        except Exception as exc:
+            last_error = str(exc)
+        if attempt < max_attempts:
+            time.sleep(min(8, attempt * 2))
+    return None, last_error, max_attempts
+
+
+def _load_failed_downloads() -> list[dict[str, Any]]:
+    payload = _load_json(FAILED_DOWNLOADS_PATH)
+    return payload if isinstance(payload, list) else []
+
+
+def _record_failed_download(
+    video_id: str,
+    candidate_id: str,
+    youtube_url: str,
+    error_message: str,
+    retry_count: int,
+) -> None:
+    failures = _load_failed_downloads()
+    next_failures = [
+        failure
+        for failure in failures
+        if not (
+            str(failure.get("video_id") or "") == video_id
+            and str(failure.get("candidate_id") or "") == candidate_id
+        )
+    ]
+    next_failures.append(
+        {
+            "video_id": video_id,
+            "candidate_id": candidate_id,
+            "youtube_url": youtube_url,
+            "error_message": error_message,
+            "failed_at": datetime.utcnow().isoformat(),
+            "retry_count": retry_count,
+        }
+    )
+    _write_json(FAILED_DOWNLOADS_PATH, next_failures)
+
+
+def _clear_failed_download(video_id: str, candidate_id: str) -> None:
+    failures = _load_failed_downloads()
+    next_failures = [
+        failure
+        for failure in failures
+        if not (
+            str(failure.get("video_id") or "") == video_id
+            and str(failure.get("candidate_id") or "") == candidate_id
+        )
+    ]
+    if len(next_failures) != len(failures):
+        _write_json(FAILED_DOWNLOADS_PATH, next_failures)
+
+
+def _clean_partials_for_items(items: list[dict[str, Any]]) -> int:
+    video_ids = {str(item.get("video_id") or "") for item in items if item.get("video_id")}
+    if not video_ids:
+        return 0
+    directories = [
+        config.STORAGE_VIDEOS_DIR,
+        config.STORAGE_DOWNLOADS_DIR,
+        config.STORAGE_TRENDS_DIR.parent / "cache",
+    ]
+    removed = 0
+    for directory in directories:
+        if not directory.exists():
+            continue
+        root = directory.resolve()
+        for video_id in video_ids:
+            for pattern in (f"{video_id}*.part", f"{video_id}*.ytdl", f"{video_id}*.temp", f"{video_id}*.tmp"):
+                for path in directory.glob(pattern):
+                    try:
+                        resolved = path.resolve()
+                        if not resolved.is_file() or root not in resolved.parents:
+                            continue
+                        resolved.unlink()
+                        removed += 1
+                    except Exception:
+                        pass
+    return removed
 
 
 def _ffmpeg_command(source_path: Path, output_path: Path, start: float, duration: float, overwrite: bool) -> list[str]:
@@ -278,6 +387,7 @@ def _load_json(path: Path) -> Any:
 
 
 def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as file:
         json.dump(payload, file, ensure_ascii=False, indent=2)
 
