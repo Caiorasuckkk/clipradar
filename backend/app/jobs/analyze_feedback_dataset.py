@@ -58,6 +58,24 @@ def main() -> None:
     for reason in calibration.strong_negative_reasons:
         print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
     print("")
+    print(f"Sponsor/product rejected count: {calibration.sponsor_rejection_count}")
+    for reason in calibration.sponsor_negative_reasons:
+        print(
+            f"- {reason}: count={calibration.reason_counts.get(reason, 0)} "
+            f"avg_rating={calibration.average_rating_by_reason.get(reason)}"
+        )
+    print("")
+    print(f"Topic merge adjustment count: {calibration.topic_merge_adjustment_count}")
+    for reason in calibration.topic_merge_adjustment_reasons:
+        print(
+            f"- {reason}: count={calibration.reason_counts.get(reason, 0)} "
+            f"avg_rating={calibration.average_rating_by_reason.get(reason)}"
+        )
+    print("")
+    print("Strong non-content reasons:")
+    for reason in calibration.strong_non_content_reasons:
+        print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
+    print("")
     print("Incomplete ending reasons:")
     for reason in calibration.incomplete_ending_reasons:
         print(f"- {reason}: count={calibration.reason_counts.get(reason, 0)}")
@@ -88,6 +106,9 @@ def main() -> None:
     print("Recomendações automáticas para o analyzer:")
     for recommendation in service.analyzer_recommendations():
         print(f"- {recommendation}")
+    print("- reforçar propaganda_produto quando produto vier com benefício/CTA.")
+    print("- penalizar emendou_assuntos/topic_merge com trim e cap de ranking.")
+    print("- manter bom_mas_extendeu_assuntos como ajuste positivo, não rejeição.")
     print("")
     print("Resumo por vídeo:")
     summaries = sorted(
@@ -103,6 +124,16 @@ def main() -> None:
             f"weak_source={item.weak_source_feedback_count} "
             f"reasons={', '.join(item.source_quality_reasons[:4])}"
         )
+        if any(
+            reason.startswith(("propaganda_produto", "sponsor_segment", "patrocinio", "merchan"))
+            for reason in item.source_quality_reasons
+        ):
+            print(f"  sponsor/product example: {item.video_id}")
+        if any(
+            reason.startswith(("bom_mas_extendeu_assuntos", "emendou_assuntos", "topic_merge"))
+            for reason in item.source_quality_reasons
+        ):
+            print(f"  topic merge example: {item.video_id}")
     print("")
     print("Top vídeos bons:")
     for item in summaries[:5]:

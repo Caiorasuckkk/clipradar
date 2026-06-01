@@ -8,7 +8,10 @@ class ProcessingPriorityService:
     PODCAST_TERMS = {
         "podcast", "entrevista", "ticaracaticast", "flow", "podpah",
         "inteligência ltda", "inteligencia ltda", "venus podcast",
-        "papo de elite", "oestecast", "the noite",
+        "papo de elite", "oestecast", "the noite", "achismos",
+        "achismos tv", "nômade raiz", "nomade raiz", "rango brabo",
+        "quebrada fc", "podpah visita", "podpah de verão",
+        "podpah de verao",
     }
     CLIP_POTENTIAL_TERMS = {
         "escândalo", "escandalo", "crime", "política", "politica",
@@ -16,7 +19,12 @@ class ProcessingPriorityService:
         "entrevista", "conversa", "bastidores", "revelou", "história",
         "historia", "humorista", "jogador", "cantor", "ator",
         "corrupção", "corrupcao", "investigação", "investigacao",
-        "denúncia", "denuncia", "banco master",
+        "denúncia", "denuncia", "banco master", "relato", "perrengue",
+        "viagem", "cultura", "experiência", "experiencia", "debate",
+        "opinião", "opiniao", "curiosidade", "curiosidades", "perigo",
+        "perigoso", "perigosos", "mundo", "realidade", "favela",
+        "futebol", "famoso", "empresário", "empresario", "fortuna",
+        "ciência", "ciencia", "comportamento", "sociedade",
     }
     SHORT_TERMS = {"#shorts", "shorts", "shortvideo", "#short", "short "}
     GENERIC_TERMS = {"🤔", "?", "ao vivo", "live", "viral", "completo"}
@@ -57,7 +65,7 @@ class ProcessingPriorityService:
         podcast_hits = self._hits(text, self.PODCAST_TERMS)
         if podcast_hits:
             score += 2.0
-            reasons.append(f"podcast/entrevista: {', '.join(podcast_hits[:3])}")
+            reasons.append(f"fonte/formato forte: {', '.join(podcast_hits[:3])}")
 
         potential_hits = self._hits(text, self.CLIP_POTENTIAL_TERMS)
         if potential_hits:
@@ -131,7 +139,13 @@ class ProcessingPriorityService:
         return lowered in self.GENERIC_TERMS
 
     def _is_validated_short_clip(self, text: str) -> bool:
-        return "cortes" in text or "corte" in text or "podcast" in text
+        return any(
+            term in text
+            for term in {
+                "cortes", "corte", "podcast", "entrevista", "relato",
+                "história", "historia", "bastidores", "viagem",
+            }
+        )
 
     @staticmethod
     def _hits(text: str, terms: set[str]) -> list[str]:

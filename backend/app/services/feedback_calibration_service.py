@@ -17,9 +17,20 @@ POSITIVE_REASONS = {
 EXTEND_END_REASONS = {
     "otimo_final_curto", "bom_mas_curto", "bom_com_ajuste",
 }
-POSITIVE_ADJUSTMENT_REASONS = EXTEND_END_REASONS | {"otimo_mas_longo"}
+TOPIC_MERGE_ADJUSTMENT_REASONS = {
+    "bom_mas_extendeu_assuntos", "emendou_assuntos", "topic_merge",
+}
+SPONSOR_NEGATIVE_REASONS = {
+    "propaganda_produto", "sponsor_segment", "patrocinio", "merchan",
+}
+STRONG_NON_CONTENT_REASONS = SPONSOR_NEGATIVE_REASONS | {"sem_sentido", "nada_com_nada"}
+POSITIVE_ADJUSTMENT_REASONS = (
+    EXTEND_END_REASONS | {"otimo_mas_longo"} | TOPIC_MERGE_ADJUSTMENT_REASONS
+)
 STRONG_POSITIVE_REASONS = {"muito_bom", "perfeito", "otimo"}
-MODERATE_POSITIVE_REASONS = {"bom", "bom_nao_otimo", "bom_final_engracado"}
+MODERATE_POSITIVE_REASONS = {
+    "bom", "bom_nao_otimo", "bom_final_engracado", "bom_mas_extendeu_assuntos",
+}
 DUPLICATE_REASONS = {"duplicado_versao_inferior"}
 LOW_ENGAGEMENT_REASONS = {"nao_prendeu", "sem_sentido", "nada_com_nada"}
 INCOMPLETE_ENDING_REASONS = {
@@ -28,9 +39,9 @@ INCOMPLETE_ENDING_REASONS = {
 }
 STRONG_NEGATIVE_REASONS = {
     "nao_prendeu", "sem_sentido", "nada_com_nada", "nao_gostei",
-    "historia_longa_incompleta", "propaganda_produto", "sem_contexto_ruim",
-    "nao_gostei_video_fraco",
-}
+    "historia_longa_incompleta", "sem_contexto_ruim", "nao_gostei_video_fraco",
+} 
+STRONG_NEGATIVE_REASONS |= SPONSOR_NEGATIVE_REASONS
 SOURCE_NEGATIVE_REASONS = {
     "sem_contexto_ruim", "nao_gostei_video_fraco", "historia_longa_incompleta",
     "nao_gostei", "nao_prendeu", "sem_sentido", "nada_com_nada",
@@ -41,7 +52,6 @@ SOURCE_WEAK_REASONS = {
 }
 SOURCE_QUALITY_WARNING_REASONS = SOURCE_NEGATIVE_REASONS | SOURCE_WEAK_REASONS
 NEGATIVE_REASONS = {
-    "propaganda_produto",
     "nada_com_nada",
     "pergunta_sem_resposta",
     "mediano_ruim",
@@ -55,7 +65,7 @@ NEGATIVE_REASONS = {
     "sem_contexto_ruim",
     "nao_gostei_video_fraco",
     "bom_mas_video_fraco",
-}
+} | SPONSOR_NEGATIVE_REASONS
 
 
 @dataclass
@@ -85,6 +95,11 @@ class FeedbackCalibration:
     source_negative_reasons: list[str]
     source_weak_reasons: list[str]
     source_quality_warning_reasons: list[str]
+    sponsor_negative_reasons: list[str]
+    topic_merge_adjustment_reasons: list[str]
+    strong_non_content_reasons: list[str]
+    sponsor_rejection_count: int
+    topic_merge_adjustment_count: int
 
 
 @dataclass
@@ -176,13 +191,24 @@ class FeedbackCalibrationService:
             source_negative_reasons=sorted(SOURCE_NEGATIVE_REASONS & set(reason_counts)),
             source_weak_reasons=sorted(SOURCE_WEAK_REASONS & set(reason_counts)),
             source_quality_warning_reasons=sorted(SOURCE_QUALITY_WARNING_REASONS & set(reason_counts)),
+            sponsor_negative_reasons=sorted(SPONSOR_NEGATIVE_REASONS & set(reason_counts)),
+            topic_merge_adjustment_reasons=sorted(TOPIC_MERGE_ADJUSTMENT_REASONS & set(reason_counts)),
+            strong_non_content_reasons=sorted(STRONG_NON_CONTENT_REASONS & set(reason_counts)),
+            sponsor_rejection_count=sum(reason_counts.get(reason, 0) for reason in SPONSOR_NEGATIVE_REASONS),
+            topic_merge_adjustment_count=sum(
+                reason_counts.get(reason, 0) for reason in TOPIC_MERGE_ADJUSTMENT_REASONS
+            ),
         )
 
     def analyzer_recommendations(self) -> list[str]:
         calibration = self.load_latest()
         recommendations: list[str] = []
-        if "propaganda_produto" in calibration.reason_counts:
+        if calibration.sponsor_rejection_count:
             recommendations.append("Penalizar propaganda/produto como non-content forte.")
+            recommendations.append("Reforçar filtros de sponsor por produto + benefício/CTA.")
+        if calibration.topic_merge_adjustment_count:
+            recommendations.append("Penalizar emendou_assuntos/topic_merge no ranking e sugerir trim.")
+            recommendations.append("Manter bom_mas_extendeu_assuntos como ajuste positivo, não rejeição.")
         if "pergunta_sem_resposta" in calibration.reason_counts:
             recommendations.append("Bloquear clipes que terminam em pergunta sem resposta.")
         if calibration.needs_adjustment_reasons:
@@ -248,7 +274,7 @@ class FeedbackCalibrationService:
                 payload = json.load(file)
         except Exception:
             return []
-        positive_reasons = POSITIVE_REASONS | EXTEND_END_REASONS
+        positive_reasons = POSITIVE_REASONS | EXTEND_END_REASONS | {"bom_mas_extendeu_assuntos"}
         ranges: list[dict[str, Any]] = []
         for clip in payload.get("clips", []):
             if clip.get("video_id") != video_id:
@@ -334,6 +360,11 @@ class FeedbackCalibrationService:
             source_negative_reasons=[],
             source_weak_reasons=[],
             source_quality_warning_reasons=[],
+            sponsor_negative_reasons=[],
+            topic_merge_adjustment_reasons=[],
+            strong_non_content_reasons=[],
+            sponsor_rejection_count=0,
+            topic_merge_adjustment_count=0,
         )
 
     @staticmethod
@@ -374,12 +405,19 @@ class FeedbackCalibrationService:
             score -= 2.0
         if reasons.get("historia_longa_incompleta"):
             score -= 1.2
+        if approved and any(reasons.get(reason) for reason in SPONSOR_NEGATIVE_REASONS):
+            score = max(score, 5.2)
         if reasons.get("otimo") or reasons.get("perfeito") or reasons.get("muito_bom"):
             score += 0.8
         source_reasons = [
             f"{reason}:{count}"
             for reason, count in reasons.most_common()
-            if reason in SOURCE_QUALITY_WARNING_REASONS or reason in POSITIVE_REASONS
+            if (
+                reason in SOURCE_QUALITY_WARNING_REASONS
+                or reason in POSITIVE_REASONS
+                or reason in SPONSOR_NEGATIVE_REASONS
+                or reason in TOPIC_MERGE_ADJUSTMENT_REASONS
+            )
         ]
         return SourceFeedbackStats(
             video_id=video_id,

@@ -92,6 +92,37 @@ class ClipAnalyzerService:
         "demonstracao de produto", "moon pay", "moonpay", "wallet",
         "bank transfer", "apple pay", "paypal", "venmo",
     }
+    SPONSOR_PRODUCT_TERMS = {
+        "cartão", "cartao", "conta digital", "banco", "seguro viagem",
+        "cartão internacional", "cartao internacional", "conta global",
+        "nomade", "nômade", "wise", "remessa online", "inter", "nubank",
+        "c6", "xp", "rico", "btg", "binance", "wallet", "apple pay",
+        "paypal", "venmo", "moonpay", "moon pay", "exchange",
+    }
+    SPONSOR_BENEFIT_TERMS = {
+        "benefícios", "beneficios", "cashback", "desconto", "oferta",
+        "promoção", "promocao", "parcelamento", "aceito mundialmente",
+        "taxa zero", "saque", "spread", "código", "codigo",
+    }
+    SPONSOR_ACTION_TERMS = {
+        "link na descrição", "link na descricao", "link aqui embaixo",
+        "acesse", "cadastre-se", "cadastre se", "abra sua conta",
+        "baixe o app", "baixe agora", "use meu cupom", "com o cupom",
+        "cupom", "cadastro",
+    }
+    AMBIGUOUS_SPONSOR_BRANDS = {"inter", "rico", "xp", "c6"}
+    SPONSOR_STRONG_PATTERNS = {
+        "esse vídeo é patrocinado", "esse video e patrocinado",
+        "nosso patrocinador", "parceiro do canal", "link na descrição",
+        "link na descricao", "cadastre-se", "cadastre se", "abra sua conta",
+        "baixe agora", "o cartão da", "o cartao da", "conta global",
+        "cartão internacional", "cartao internacional", "com o cupom",
+    }
+    TOPIC_SHIFT_TERMS = {
+        "agora", "mudando de assunto", "voltando", "mas falando de outra coisa",
+        "aproveitando", "e sobre", "outra coisa", "próximo", "proximo",
+        "vamos falar", "calma, calma", "seguinte",
+    }
     ENTITY_ACTION_TERMS = {
         "polícia", "policia", "crime", "prisão", "prisao", "investigação",
         "investigacao", "governo", "banco", "master", "lula", "bolsonaro",
@@ -273,6 +304,13 @@ class ClipAnalyzerService:
             "rejected_by_analyzer": rejected_by_analyzer,
             "non_content_score": round(unit["non_content_score"], 2),
             "rejected_content_reason": unit["rejected_content_reason"],
+            "sponsor_product_score": round(unit["sponsor_product_score"], 2),
+            "sponsor_product_reason": unit["sponsor_product_reason"],
+            "is_sponsor_segment": unit["is_sponsor_segment"],
+            "topic_merge_score": round(unit["topic_merge_score"], 2),
+            "topic_merge_reason": unit["topic_merge_reason"],
+            "likely_topic_merge": unit["likely_topic_merge"],
+            "topic_shift_count": unit["topic_shift_count"],
             "reason_for_duration": unit["reason_for_duration"],
             "ending_type": unit["ending_type"],
             "link": link,
@@ -295,6 +333,8 @@ class ClipAnalyzerService:
             key=lambda unit: (
                 unit.get("not_recommended_reason") == "duplicado_versao_inferior",
                 not unit.get("duplicate_suppressed"),
+                unit.get("is_sponsor_segment", False),
+                unit.get("likely_topic_merge", False),
                 unit["score"],
                 unit["narrative_quality_score"],
                 unit["standalone_score"],
@@ -409,9 +449,12 @@ class ClipAnalyzerService:
         feedback_items = self.feedback_calibration_service.reviewed_ranges_for_video(video_id)
         positive_reasons = {
             "muito_bom", "perfeito", "otimo", "bom", "otimo_mas_longo",
-            "bom_nao_otimo",
+            "bom_nao_otimo", "bom_mas_extendeu_assuntos",
         }
-        positive_adjustment_reasons = {"otimo_mas_longo"}
+        positive_adjustment_reasons = {
+            "otimo_mas_longo", "bom_mas_extendeu_assuntos", "emendou_assuntos",
+            "topic_merge",
+        }
         low_engagement_reasons = {"nao_prendeu", "sem_sentido", "nada_com_nada"}
         strong_negative_reasons = {"nao_gostei", "historia_longa_incompleta"}
         incomplete_reasons = {
@@ -465,6 +508,9 @@ class ClipAnalyzerService:
                 )
                 if positive_reason == "bom_nao_otimo":
                     unit["feedback_similarity_reason"] = "bom, mas não ótimo"
+                if positive_reason == "bom_mas_extendeu_assuntos":
+                    unit["feedback_similarity_reason"] = "bom_mas_extendeu_assuntos"
+                    self._mark_needs_trim(unit, "topic_merge")
                 if self._can_promote_from_feedback(unit):
                     unit["recommended_version"] = True
                     unit["recommended_review_required"] = True
@@ -475,6 +521,9 @@ class ClipAnalyzerService:
                     unit["failed_criteria"] = []
                 if positive_reason in positive_adjustment_reasons:
                     self._mark_needs_trim(unit, f"feedback: {positive_reason}")
+                    if positive_reason in {"bom_mas_extendeu_assuntos", "emendou_assuntos", "topic_merge"}:
+                        unit["trim_reason"] = "topic_merge"
+                        unit["suggested_trim_strategy"] = "keep only the strongest single topic"
                 continue
 
             if reason in low_engagement_reasons or low_overlap > positive_overlap + 0.10:
@@ -585,13 +634,33 @@ class ClipAnalyzerService:
         unit["needs_trim"] = True
         unit["trim_reason"] = reason
         unit["suggested_trim_strategy"] = (
-            "keep hook and strongest development, avoid full long story"
+            "keep only the strongest single topic"
+            if "topic_merge" in reason or "emendou_assuntos" in reason
+            else "keep hook and strongest development, avoid full long story"
         )
 
     def _apply_ranking_and_trim(self, units: list[dict[str, Any]]) -> None:
         for unit in units:
             risk = self._long_incomplete_story_risk(unit)
             unit["long_incomplete_story_risk"] = risk
+            if unit.get("is_sponsor_segment"):
+                unit["recommended_version"] = False
+                unit["recommended_review_required"] = False
+                unit["not_recommended_reason"] = "propaganda_produto"
+                unit["rejected_content_reason"] = "propaganda_produto"
+                unit["non_content_score"] = max(float(unit.get("non_content_score") or 0.0), 9.0)
+                unit["failed_criteria"] = list(
+                    dict.fromkeys(unit.get("failed_criteria", []) + ["propaganda_produto"])
+                )
+            if float(unit.get("topic_merge_score") or 0.0) >= 5:
+                self._mark_needs_trim(unit, "topic_merge")
+                unit["failed_criteria"] = list(
+                    dict.fromkeys(unit.get("failed_criteria", []) + ["topic_merge"])
+                )
+            if float(unit.get("topic_merge_score") or 0.0) >= 8:
+                unit["recommended_version"] = False
+                unit["recommended_review_required"] = False
+                unit["not_recommended_reason"] = unit["not_recommended_reason"] or "topic_merge"
             if risk >= 7.0:
                 unit["recommended_version"] = False
                 unit["recommended_review_required"] = False
@@ -648,7 +717,14 @@ class ClipAnalyzerService:
             reasons.append("unanswered question")
         if unit.get("rejected_content_reason") or unit.get("non_content_score", 0) > 0:
             score -= 4.0
-            reasons.append("non-content")
+            reasons.append(
+                "sponsor/product segment"
+                if unit.get("is_sponsor_segment")
+                else "non-content"
+            )
+        if unit.get("topic_merge_score", 0) >= 5:
+            score -= min(2.2, unit.get("topic_merge_score", 0) * 0.25)
+            reasons.append("topic merge")
         if unit.get("engagement_risk_score", 0) >= 7 or unit.get("boring_or_confusing_score", 0) >= 7:
             score -= 3.0
             reasons.append("engagement risk")
@@ -669,6 +745,17 @@ class ClipAnalyzerService:
             tier = "good" if score >= 6.7 else tier
             if tier == "excellent":
                 tier = "good"
+        if unit.get("topic_merge_score", 0) >= 5:
+            if tier == "excellent":
+                tier = "good"
+            if unit.get("topic_merge_score", 0) >= 6.5 and tier in {"excellent", "good"}:
+                tier = "review"
+        if "bom_mas_extendeu_assuntos" in notes or "bom_mas_extendeu_assuntos" in similarity:
+            if tier == "excellent":
+                tier = "good"
+            reasons.append("good but topic merge/overextended")
+        if unit.get("is_sponsor_segment"):
+            tier = "weak"
         return score, tier, "; ".join(reasons[:5]) or "balanced heuristic ranking"
 
     @staticmethod
@@ -719,6 +806,8 @@ class ClipAnalyzerService:
             avg_standalone = sum(float(unit.get("standalone_score") or 0.0) for unit in units) / len(units)
             high_standalone_count = sum(1 for unit in units if float(unit.get("standalone_score") or 0.0) >= 8)
             non_content_count = sum(1 for unit in units if float(unit.get("non_content_score") or 0.0) >= 6)
+            sponsor_product_count = sum(1 for unit in units if unit.get("is_sponsor_segment"))
+            topic_merge_high_count = sum(1 for unit in units if float(unit.get("topic_merge_score") or 0.0) >= 6.5)
             long_story_count = sum(1 for unit in units if float(unit.get("long_incomplete_story_risk") or 0.0) >= 7)
             false_risk_count = sum(1 for unit in units if float(unit.get("false_full_thought_risk") or 0.0) >= 6)
             weak_density_count = sum(1 for unit in units if float(unit.get("content_density_score") or 0.0) < 4)
@@ -732,6 +821,12 @@ class ClipAnalyzerService:
             if non_content_count:
                 score -= min(2.0, non_content_count * 0.55)
                 warnings.append(f"{non_content_count} candidatos com merchan/propaganda")
+            if sponsor_product_count:
+                score -= min(2.0, sponsor_product_count * 0.75)
+                warnings.append(f"{sponsor_product_count} candidatos com sponsor/product")
+            if topic_merge_high_count:
+                score -= min(1.5, topic_merge_high_count * 0.35)
+                warnings.append(f"{topic_merge_high_count} candidatos com topic merge alto")
             if long_story_count:
                 score -= min(2.5, long_story_count * 0.55)
                 warnings.append(f"{long_story_count} candidatos com história longa incompleta")
@@ -745,6 +840,11 @@ class ClipAnalyzerService:
         if feedback.total_reviews and feedback.rejected_count == 0 and feedback.weak_source_feedback_count == 0:
             score = max(score, feedback_score - 1.0)
         if not feedback.total_reviews:
+            score = max(score, 4.8)
+        if feedback.approved_count and any(
+            str(reason).startswith(("propaganda_produto", "sponsor_segment", "patrocinio", "merchan"))
+            for reason in feedback.source_quality_reasons
+        ):
             score = max(score, 4.8)
         score = round(max(0.0, min(10.0, score)), 2)
         if score >= 8.2:
@@ -873,7 +973,13 @@ class ClipAnalyzerService:
             units,
             key=lambda unit: (
                 unit.get("recommended_version", False),
+                not unit.get("is_sponsor_segment", False),
+                -float(unit.get("sponsor_product_score") or 0.0),
+                -float(unit.get("topic_merge_score") or 0.0),
+                45 <= float(unit.get("duration") or 0.0) <= 85,
                 self._feedback_rating_weight(unit),
+                unit.get("story_completion_score", 0.0),
+                not unit.get("contains_multiple_thoughts", False),
                 unit.get("reference_alignment_score", 0.0),
                 unit.get("standalone_score", 0.0),
                 unit.get("narrative_quality_score", 0.0),
@@ -1172,6 +1278,10 @@ class ClipAnalyzerService:
         context_before_score, starts_out_of_context = self._context_before_score(text)
         content_density_score, weak_content = self._content_density_score(text)
         non_content_score, rejected_content_reason = self._non_content_score(text)
+        sponsor_product_score, sponsor_product_reason, is_sponsor_segment = self._sponsor_product_score(text)
+        if is_sponsor_segment:
+            non_content_score = max(non_content_score, sponsor_product_score, 9.0)
+            rejected_content_reason = "propaganda_produto"
         ends_with_unanswered_question = self._ends_with_unanswered_question(text)
         story_completion_score = self._story_completion_score(text, duration, has_development)
         thought_closure_score = self._thought_closure_score(text, has_complete_ending)
@@ -1209,6 +1319,14 @@ class ClipAnalyzerService:
             has_complete_ending=has_complete_ending,
             selected_boundary_reason=selected_boundary_reason,
             duration=duration,
+        )
+        topic_merge_score, topic_merge_reason, likely_topic_merge, topic_shift_count = self._topic_merge_score(
+            segments=segments,
+            text=text,
+            duration=duration,
+            contains_multiple_thoughts=contains_multiple_thoughts,
+            ending_type=ending_type,
+            new_thought_count=new_thought_count,
         )
         reference_alignment_score = self._reference_alignment_score(
             hook_score=hook_score,
@@ -1290,6 +1408,8 @@ class ClipAnalyzerService:
             score -= (false_full_thought_risk - 4) * 0.7
         if non_content_score >= 4:
             score -= non_content_score * 0.8
+        if topic_merge_score >= 5:
+            score -= min(2.2, topic_merge_score * 0.22)
         if ends_with_unanswered_question:
             score -= 2.5
         if is_podcast and duration < self.MIN_CLIP_SECONDS and story_completion_score < 8:
@@ -1306,6 +1426,20 @@ class ClipAnalyzerService:
             score = min(score, 5.8)
         if false_full_thought_risk > 6.0:
             score = min(score, 5.5)
+        if is_sponsor_segment:
+            recommended_version = False
+            recommended_review_required = False
+            not_recommended_reason = "propaganda_produto"
+            recommendation_reason = ""
+            failed_criteria = list(dict.fromkeys(failed_criteria + ["propaganda_produto"]))
+            score = min(score, 3.5)
+        if likely_topic_merge:
+            failed_criteria = list(dict.fromkeys(failed_criteria + ["topic_merge"]))
+        if topic_merge_score >= 8:
+            recommended_version = False
+            recommended_review_required = False
+            not_recommended_reason = not_recommended_reason or "topic_merge"
+            score = min(score, 5.0)
         if not recommended_version:
             score = min(score, 6.6)
         position_ratio = start / max(1.0, video_duration)
@@ -1343,9 +1477,13 @@ class ClipAnalyzerService:
             "recommendation_reason": recommendation_reason,
             "promoted_from_diagnostic": False,
             "promotion_reason": "",
-            "needs_trim": False,
-            "trim_reason": "",
-            "suggested_trim_strategy": "",
+            "needs_trim": topic_merge_score >= 5,
+            "trim_reason": "topic_merge" if topic_merge_score >= 5 else "",
+            "suggested_trim_strategy": (
+                "keep only the strongest single topic"
+                if topic_merge_score >= 5
+                else ""
+            ),
             "story_completion_score": story_completion_score,
             "thought_closure_score": thought_closure_score,
             "context_before_score": context_before_score,
@@ -1360,6 +1498,13 @@ class ClipAnalyzerService:
             "failed_criteria": failed_criteria,
             "non_content_score": non_content_score,
             "rejected_content_reason": rejected_content_reason,
+            "sponsor_product_score": sponsor_product_score,
+            "sponsor_product_reason": sponsor_product_reason,
+            "is_sponsor_segment": is_sponsor_segment,
+            "topic_merge_score": topic_merge_score,
+            "topic_merge_reason": topic_merge_reason,
+            "likely_topic_merge": likely_topic_merge,
+            "topic_shift_count": topic_shift_count,
             "ends_with_unanswered_question": ends_with_unanswered_question,
             "tail_padding_applied": tail_padding_applied,
             "tail_padding_seconds": tail_padding_seconds,
@@ -1460,8 +1605,11 @@ class ClipAnalyzerService:
             units,
             key=lambda unit: (
                 unit["recommended_version"],
+                not unit.get("is_sponsor_segment", False),
                 unit["ranking_quality_score"],
                 unit["ranking_quality_tier"] in {"excellent", "good"},
+                -float(unit.get("topic_merge_score") or 0.0),
+                45 <= float(unit.get("duration") or 0.0) <= 85,
                 unit.get("feedback_similarity_reason", "") != "baixo alinhamento com benchmark de cortes bons",
                 unit["reference_alignment_score"],
                 unit["narrative_quality_score"],
@@ -1526,6 +1674,8 @@ class ClipAnalyzerService:
             if candidate["duration"] > self.HARD_MAX_SECONDS:
                 continue
             if candidate["non_content_score"] >= 6 and candidate["content_density_score"] < 8:
+                continue
+            if candidate.get("is_sponsor_segment"):
                 continue
             if candidate["ranking_quality_tier"] == "weak":
                 continue
@@ -1985,6 +2135,123 @@ class ClipAnalyzerService:
         score -= min(2.5, len(short_words) / max(1, len(words)) * 5)
         score -= min(3.0, len(odd_tokens) * 0.8)
         return max(0.0, min(10.0, score))
+
+    @staticmethod
+    def _term_in_text(text: str, term: str) -> bool:
+        if " " in term or "-" in term:
+            return term in text
+        return bool(re.search(rf"\b{re.escape(term)}\b", text))
+
+    @classmethod
+    def _term_hits(cls, text: str, terms: set[str]) -> list[str]:
+        return [term for term in terms if cls._term_in_text(text, term)]
+
+    def _sponsor_product_score(self, text: str) -> tuple[float, str, bool]:
+        lowered = text.lower()
+        product_hits = self._term_hits(lowered, self.SPONSOR_PRODUCT_TERMS)
+        benefit_hits = self._term_hits(lowered, self.SPONSOR_BENEFIT_TERMS)
+        action_hits = self._term_hits(lowered, self.SPONSOR_ACTION_TERMS)
+        pattern_hits = self._term_hits(lowered, self.SPONSOR_STRONG_PATTERNS)
+        generic_hits = [
+            term
+            for term in {"patrocínio", "patrocinio", "patrocinador", "merchan", "parceiro"}
+            if self._term_in_text(lowered, term)
+        ]
+        ambiguous_brand_hits = [term for term in product_hits if term in self.AMBIGUOUS_SPONSOR_BRANDS]
+        non_ambiguous_product_hits = [
+            term for term in product_hits if term not in self.AMBIGUOUS_SPONSOR_BRANDS
+        ]
+
+        score = 0.0
+        if pattern_hits:
+            score += 6.0
+        if generic_hits:
+            score += 4.5
+        if product_hits:
+            score += min(2.5, len(product_hits) * 0.8)
+        if benefit_hits:
+            score += min(2.5, len(benefit_hits) * 0.9)
+        if action_hits:
+            score += min(3.0, len(action_hits) * 1.1)
+
+        has_commercial_combo = (
+            bool(pattern_hits)
+            or bool(generic_hits and (non_ambiguous_product_hits or action_hits))
+            or bool(non_ambiguous_product_hits and action_hits)
+            or bool(non_ambiguous_product_hits and benefit_hits and len(non_ambiguous_product_hits) + len(benefit_hits) >= 3)
+            or bool(ambiguous_brand_hits and action_hits and benefit_hits)
+        )
+        if not has_commercial_combo:
+            return 0.0, "", False
+
+        score = max(score, 7.0 if action_hits or pattern_hits or generic_hits else 6.0)
+        reason_parts = []
+        if pattern_hits:
+            reason_parts.append(f"pattern={', '.join(pattern_hits[:2])}")
+        if product_hits:
+            reason_parts.append(f"product={', '.join(product_hits[:3])}")
+        if benefit_hits:
+            reason_parts.append(f"benefit={', '.join(benefit_hits[:3])}")
+        if action_hits:
+            reason_parts.append(f"cta={', '.join(action_hits[:3])}")
+        if generic_hits:
+            reason_parts.append(f"sponsor={', '.join(generic_hits[:2])}")
+        return min(10.0, round(score, 2)), "; ".join(reason_parts), score >= 7.0
+
+    def _topic_merge_score(
+        self,
+        segments: list[dict[str, Any]],
+        text: str,
+        duration: float,
+        contains_multiple_thoughts: bool,
+        ending_type: str,
+        new_thought_count: int,
+    ) -> tuple[float, str, bool, int]:
+        lowered = text.lower()
+        connector_hits = [term for term in self.TOPIC_SHIFT_TERMS if term in lowered]
+        question_count = text.count("?")
+        internal_starts = 0
+        base_start = float(segments[0].get("start", 0.0)) if segments else 0.0
+        base_end = float(segments[-1].get("end", base_start)) if segments else base_start
+        for segment in segments[1:]:
+            start = float(segment.get("start", 0.0))
+            if start - base_start < 20 or base_end - start < 10:
+                continue
+            if self._is_new_thought_start(str(segment.get("text", ""))):
+                internal_starts += 1
+
+        shift_count = max(new_thought_count, internal_starts, len(connector_hits))
+        score = 0.0
+        if connector_hits:
+            score += min(3.0, len(connector_hits) * 1.0)
+        if question_count >= 2:
+            score += min(2.5, (question_count - 1) * 0.8)
+        if internal_starts:
+            score += min(3.0, internal_starts * 1.2)
+        if new_thought_count:
+            score += min(2.5, new_thought_count * 1.1)
+        if contains_multiple_thoughts and duration > 75:
+            score += 2.4
+        elif contains_multiple_thoughts:
+            score += 1.0
+        if ending_type == "new_topic_started" and duration > 70:
+            score += 1.5
+        if duration > 100 and (contains_multiple_thoughts or connector_hits):
+            score += 1.0
+
+        likely = score >= 5.0
+        reasons = []
+        if connector_hits:
+            reasons.append(f"shifts={', '.join(connector_hits[:4])}")
+        if question_count >= 2:
+            reasons.append(f"questions={question_count}")
+        if internal_starts or new_thought_count:
+            reasons.append(f"new_topic_starts={max(internal_starts, new_thought_count)}")
+        if contains_multiple_thoughts:
+            reasons.append("contains_multiple_thoughts")
+        if ending_type == "new_topic_started":
+            reasons.append("ending_type=new_topic_started")
+        return round(max(0.0, min(10.0, score)), 2), "; ".join(reasons), likely, shift_count
 
     def _non_content_score(self, text: str) -> tuple[float, str]:
         lowered = text.lower()

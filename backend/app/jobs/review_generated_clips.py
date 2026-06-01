@@ -29,6 +29,8 @@ def main() -> None:
         print(payload.get("analysis_note"))
     base_url = payload.get("url", "")
     clips = payload.get("clips", [])
+    diagnostic_candidates = payload.get("diagnostic_candidates", [])
+    _print_source_warnings(clips, diagnostic_candidates)
     if not clips:
         print("Nenhum clipe recomendado.")
     for clip in clips:
@@ -98,6 +100,17 @@ def main() -> None:
             f"duration_reason={clip.get('reason_for_duration')} ending_type={clip.get('ending_type')}"
         )
         print(
+            f"sponsor_product={clip.get('sponsor_product_score')} "
+            f"is_sponsor={clip.get('is_sponsor_segment')} "
+            f"sponsor_reason={clip.get('sponsor_product_reason', '')}"
+        )
+        print(
+            f"topic_merge={clip.get('topic_merge_score')} "
+            f"likely={clip.get('likely_topic_merge')} "
+            f"shifts={clip.get('topic_shift_count')} "
+            f"topic_reason={clip.get('topic_merge_reason', '')}"
+        )
+        print(
             f"review: status={clip.get('review_status', 'pending_review')} "
             f"rating={clip.get('review_rating')} reason={clip.get('review_reason', '')}"
         )
@@ -117,7 +130,6 @@ def main() -> None:
         )
         print("")
 
-    diagnostic_candidates = payload.get("diagnostic_candidates", [])
     if diagnostic_candidates:
         print("Diagnostic Candidates")
         for candidate in diagnostic_candidates:
@@ -162,6 +174,17 @@ def main() -> None:
             )
             if candidate.get("feedback_calibration_notes"):
                 print(f"feedback_notes={candidate.get('feedback_calibration_notes')}")
+            print(
+                f"sponsor_product={candidate.get('sponsor_product_score')} "
+                f"is_sponsor={candidate.get('is_sponsor_segment')} "
+                f"sponsor_reason={candidate.get('sponsor_product_reason', '')}"
+            )
+            print(
+                f"topic_merge={candidate.get('topic_merge_score')} "
+                f"likely={candidate.get('likely_topic_merge')} "
+                f"shifts={candidate.get('topic_shift_count')} "
+                f"topic_reason={candidate.get('topic_merge_reason', '')}"
+            )
             print(f"reason: {candidate.get('not_recommended_reason', '')}")
             print(f"failed_criteria: {', '.join(candidate.get('failed_criteria', []))}")
             print(
@@ -176,6 +199,18 @@ def main() -> None:
                 print(f"link: {link}")
             print(f"text: {_display(candidate.get('text', ''), 220)}")
             print("")
+
+
+def _print_source_warnings(clips: list[dict], diagnostics: list[dict]) -> None:
+    all_candidates = clips + diagnostics
+    sponsor_count = sum(1 for item in all_candidates if item.get("is_sponsor_segment"))
+    topic_merge_count = sum(
+        1 for item in all_candidates if float(item.get("topic_merge_score") or 0.0) >= 6.5
+    )
+    if sponsor_count or topic_merge_count:
+        print("source warnings:")
+        print(f"- {sponsor_count} candidatos com sponsor/product")
+        print(f"- {topic_merge_count} candidatos com topic merge alto")
 
 
 def _display(value: object, limit: int) -> str:

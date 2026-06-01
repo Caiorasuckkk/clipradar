@@ -28,6 +28,15 @@ from app.services.video_history_service import VideoHistoryService
 BR_QUERIES = [
     "Flow Podcast entrevista",
     "Podpah entrevista",
+    "Podpah Rango Brabo entrevista",
+    "Rango Brabo Podpah famoso",
+    "Rango Brabo jogador",
+    "Quebrada FC Podpah",
+    "Quebrada FC jogador entrevista",
+    "Podpah futebol bastidores",
+    "Podpah histórias famoso",
+    "Podpah visita entrevista",
+    "Podpah de Verão entrevista",
     "Inteligência Ltda entrevista",
     "Ticaracaticast entrevista",
     "Venus Podcast entrevista",
@@ -40,8 +49,24 @@ BR_QUERIES = [
     "RedCast podcast entrevista",
     "RedCast convidado famoso",
     "Ciência Sem Fim podcast entrevista",
+    "Achismos TV entrevista",
+    "Achismos Podcast",
+    "Achismos TV ciência",
+    "Achismos TV comportamento",
+    "Achismos TV polêmica",
+    "Achismos TV cortes",
+    "Achismos TV sociedade",
+    "Achismos TV convidado",
     "Os Sócios Podcast entrevista",
     "Cara a Tapa entrevista",
+    "Nômade Raiz viagem história",
+    "Nômade Raiz relato viagem",
+    "Nômade Raiz histórias pelo mundo",
+    "Nômade Raiz perrengue viagem",
+    "Nômade Raiz cultura",
+    "Nômade Raiz países perigosos",
+    "Nômade Raiz curiosidades",
+    "Nômade Raiz entrevista",
     "Cortes podcast convidado famoso",
     "Podcast convidado famoso polêmica",
     "Podcast história engraçada famoso",
@@ -105,13 +130,21 @@ SHORTS_REJECT_TERMS = {
 
 REACT_REJECT_TERMS = {"react:", "react", "reação", "reacao", "reacts"}
 
+FAN_CLIP_REJECT_TERMS = {
+    "fan clip", "fan edit", "compilado", "compilação", "compilacao",
+    "melhores momentos", "highlights",
+}
+
 PODCAST_STRONG_TERMS = {
     "flow", "podpah", "inteligência ltda", "inteligencia ltda",
     "ticaracaticast", "venus", "vênus", "papo de elite", "à deriva",
     "a deriva", "primocast", "redcast", "the noite", "programa do joão",
     "programa do joao", "ciência sem fim", "ciencia sem fim", "os sócios",
     "os socios", "cara a tapa", "joe rogan", "theo von", "lex fridman",
-    "piers morgan", "hot ones", "club shay shay",
+    "piers morgan", "hot ones", "club shay shay", "achismos tv",
+    "achismos podcast", "achismos", "nômade raiz", "nomade raiz",
+    "rango brabo", "quebrada fc", "podpah visita", "podpah de verão",
+    "podpah de verao",
 }
 
 EDITORIAL_POSITIVE_TERMS = {
@@ -120,12 +153,26 @@ EDITORIAL_POSITIVE_TERMS = {
     "ruyter", "monark", "vilela", "joão kléber", "joao kleber",
     "história", "historia", "engraçada", "engracada", "humor",
     "revelou", "conversa", "podcast", "interview", "controversy",
-    "backstage", "revealed",
+    "backstage", "revealed", "relato", "perrengue", "viagem", "cultura",
+    "experiência", "experiencia", "debate", "opinião", "opiniao",
+    "curiosidade", "curiosidades", "perigo", "perigoso", "perigosos",
+    "mundo", "realidade", "favela", "futebol", "empresário",
+    "empresario", "fortuna", "crime", "ciência", "ciencia",
+    "comportamento", "sociedade", "histórias", "historias",
 }
 
 PODCAST_INTENT_TERMS = {
     "podcast", "entrevista", "interview", "show", "cast", "conversa",
     "cortes", "corte",
+}
+
+CUTTABLE_FORMAT_TERMS = PODCAST_INTENT_TERMS | {
+    "programa", "quadro", "história", "historia", "histórias", "historias",
+    "relato", "perrengue", "bastidores", "viagem", "storytelling",
+    "cultura", "mundo", "curiosidade", "curiosidades", "debate",
+    "opinião", "opiniao", "análise", "analise", "experiência",
+    "experiencia", "visita", "rango brabo", "quebrada fc", "achismos",
+    "nômade raiz", "nomade raiz",
 }
 
 
@@ -555,11 +602,14 @@ def _reject_reason(title: str, channel_title: str, duration_seconds: int) -> str
     for term in LOW_QUALITY_REJECT_TERMS:
         if term in text:
             return f"local/institucional rejeitado: {term}"
+    for term in FAN_CLIP_REJECT_TERMS:
+        if term in text:
+            return f"fan clip/compilado rejeitado: {term}"
     for term in REACT_REJECT_TERMS:
         if term in text:
             return f"react/reação rejeitado: {term}"
-    if not any(term in text for term in PODCAST_INTENT_TERMS):
-        return "não parece podcast/entrevista"
+    if not any(term in text for term in CUTTABLE_FORMAT_TERMS):
+        return "não parece formato cortável"
     return ""
 
 
@@ -616,7 +666,7 @@ def _editorial_fit_score(video: dict[str, Any]) -> tuple[float, list[str]]:
 
     if 480 <= duration <= 10800:
         score += 1.4
-        reasons.append("duração boa para podcast/entrevista")
+        reasons.append("duração boa para formato cortável")
     elif duration > 10800:
         score += 0.4
         reasons.append("duração muito longa, mas aproveitável")
@@ -648,6 +698,7 @@ def _editorial_fit_score(video: dict[str, Any]) -> tuple[float, list[str]]:
         (LOW_QUALITY_REJECT_TERMS, "sinal local/institucional"),
         (GAME_REJECT_TERMS, "sinal de gameplay/jogo"),
         (MUSIC_REJECT_TERMS, "sinal de música/trailer"),
+        (FAN_CLIP_REJECT_TERMS, "sinal de fan clip/compilado"),
     ]
     for terms, label in negative_categories:
         matches = sorted(term for term in terms if term in text)
@@ -657,25 +708,27 @@ def _editorial_fit_score(video: dict[str, Any]) -> tuple[float, list[str]]:
     if "react" in text:
         score -= 2.0
         reasons.append("react reduzido")
-    if not _has_strong_podcast_signal(text) and not positive_terms:
+    if not _has_strong_cuttable_signal(text) and not positive_terms:
         score -= 2.0
         reasons.append("canal desconhecido/título genérico")
 
     return max(0.0, min(10.0, round(score, 2))), reasons or ["sem sinais editoriais fortes"]
 
 
-def _has_strong_podcast_signal(text: str) -> bool:
-    return any(term in text for term in PODCAST_STRONG_TERMS | PODCAST_INTENT_TERMS)
+def _has_strong_cuttable_signal(text: str) -> bool:
+    return any(term in text for term in PODCAST_STRONG_TERMS | CUTTABLE_FORMAT_TERMS)
 
 
 def _topic_bucket(video: dict[str, Any]) -> str:
     text = f"{video['title']} {video['channel_title']}".lower()
-    if any(term in text for term in {"ciência", "ciencia", "tecnologia", "tech", "lex fridman"}):
-        return "ciencia/tecnologia"
+    if any(term in text for term in {"viagem", "nômade", "nomade", "países", "paises", "mundo", "cultura", "perrengue"}):
+        return "viagem/storytelling"
+    if any(term in text for term in {"ciência", "ciencia", "comportamento", "sociedade", "achismos", "tecnologia", "tech", "lex fridman"}):
+        return "ciencia/comportamento"
     if any(term in text for term in {"dinheiro", "business", "empresa", "mercado", "primo", "socios", "sócios"}):
-        return "business/dinheiro"
-    if any(term in text for term in {"neymar", "futebol", "jogador", "ex jogador", "copa do mundo", "flamengo", "corinthians"}):
-        return "futebol/polemica"
+        return "negocios/dinheiro"
+    if any(term in text for term in {"neymar", "futebol", "jogador", "ex jogador", "copa do mundo", "flamengo", "corinthians", "quebrada fc"}):
+        return "futebol"
     if any(term in text for term in {"celebrity", "famous", "hot ones", "club shay shay"}):
         return "global/celebrity"
     if any(term in text for term in {"política", "politica", "piers", "opinião", "opiniao"}):
@@ -684,8 +737,8 @@ def _topic_bucket(video: dict[str, Any]) -> str:
         return "crime/seguranca"
     if any(term in text for term in {"humor", "comed", "funny", "the noite", "theo von", "famoso"}):
         return "humor/famoso"
-    if any(term in text for term in {"história", "historia", "story", "curious", "curios"}):
-        return "curiosidade/historia"
+    if any(term in text for term in {"história", "historia", "histórias", "historias", "relato", "story", "curious", "curios"}):
+        return "historias/relatos"
     return "podcast/entrevista"
 
 

@@ -182,9 +182,9 @@ The dataset includes only `approved`, `rejected`, and `needs_adjustment` clips. 
 
 Diagnostic candidates are included in the exported dataset when manually reviewed. Each record includes `source_collection` as either `clips` or `diagnostic_candidates`, so calibration can distinguish recommended clips from rejected candidates that later proved useful.
 
-## Podcast Discovery Batch
+## Cuttable Format Discovery Batch
 
-Use the podcast discovery batch to find fresh long-form podcasts and interviews for more clipping tests without downloading or transcribing anything:
+Use the discovery batch to find fresh long-form and medium-form videos with short-clip potential without downloading or transcribing anything:
 
 ```powershell
 python -m app.jobs.discover_podcast_batch
@@ -192,7 +192,7 @@ python -m app.jobs.review_selected_videos
 python -m app.jobs.process_queue
 ```
 
-The discovery job searches recent BR and global podcast/interview queries with YouTube API key rotation, filters out Shorts, music videos, trailers, and short videos, keeps videos at least 8 minutes long by default, limits each channel to 3 videos, calculates `processing_priority_score`, and queues selected videos for later processing.
+The discovery job searches recent BR and global cuttable-format queries with YouTube API key rotation. Eligible formats include podcasts/interviews, conversation shows, story-driven segments, travel/storytelling, opinion/debate, backstage material, personal accounts, and narrative analysis. It filters out Shorts, gameplay, music videos, trailers, weak fan clips, low-originality reacts, local/institutional material, news snippets without conversation, and short videos below the configured minimum. By default it keeps videos at least 8 minutes long, limits each channel to 3 videos, calculates `processing_priority_score`, values editorial buckets such as podcast/interview, humor/famous, football, business/money, politics/opinion, travel/storytelling, and science/behavior, then queues selected videos for later processing.
 
 Discovery settings can be tuned in `.env`:
 

@@ -15,7 +15,9 @@ NEGATIVE_REVIEW_TERMS = {
     "walkthrough", "call of duty", "modern warfare", "unreal engine", "mw2",
     "mw4", "ign", "game", "react:", "react", "reação", "reacao", "reacts",
     "trailer", "official video", "music video", "lyrics", "clipe oficial",
-    "videoclipe", "música", "musica",
+    "videoclipe", "música", "musica", "fan clip", "fan edit",
+    "compilado", "compilação", "compilacao", "melhores momentos",
+    "highlights",
 }
 
 
