@@ -40,22 +40,37 @@ class SummaryCard extends StatelessWidget {
               runSpacing: 6,
               children: [
                 _Metric(
-                  label: 'Pendentes',
+                  label: 'Total',
+                  value: '${summary?.totalExported ?? 0}',
+                  color: Colors.white70,
+                ),
+                _Metric(
+                  label: 'Rev.',
+                  value: '${summary?.totalReviewed ?? 0}',
+                  color: cyan,
+                ),
+                _Metric(
+                  label: 'Pend.',
                   value: '${summary?.pending ?? 0}',
                   color: cyan,
                 ),
                 _Metric(
-                  label: 'Aprovados',
+                  label: 'Ok',
                   value: '${summary?.approved ?? 0}',
                   color: const Color(0xFF10B981),
                 ),
                 _Metric(
-                  label: 'Ajustes',
+                  label: 'No',
+                  value: '${summary?.rejected ?? 0}',
+                  color: const Color(0xFFEF4444),
+                ),
+                _Metric(
+                  label: 'Trim',
                   value: '${summary?.needsAdjustment ?? 0}',
                   color: const Color(0xFFF59E0B),
                 ),
                 _Metric(
-                  label: 'Media',
+                  label: 'Avg',
                   value: summary?.averageRating?.toStringAsFixed(1) ?? '-',
                   color: Colors.white70,
                 ),

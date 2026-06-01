@@ -48,6 +48,7 @@ def list_review_clips(
     min_rating: float = Query(0),
     include_reviewed: bool = Query(True),
     video_id: str | None = Query(None),
+    status: str = Query("all"),
 ) -> dict[str, Any]:
     clips = _load_rendered_clips()
     filtered = _filter_clips(
@@ -55,6 +56,7 @@ def list_review_clips(
         min_rating=min_rating,
         include_reviewed=include_reviewed,
         video_id=video_id,
+        status=status,
     )
     return {"clips": filtered, "count": len(filtered)}
 
@@ -70,6 +72,7 @@ def get_next_review_clip(
         min_rating=min_rating,
         include_reviewed=include_reviewed,
         video_id=video_id,
+        status="all",
     )
     if not clips:
         return {"message": "no_pending_clips", "clip": None}
@@ -212,6 +215,11 @@ def _clip_payload(
         "file_size_bytes": path.stat().st_size,
         "already_reviewed": bool(current_review),
         "current_review": current_review,
+        "rendered_review_status": current_review.get("status") if current_review else None,
+        "rendered_review_rating": current_review.get("rating") if current_review else None,
+        "rendered_review_reason": current_review.get("reason") if current_review else None,
+        "rendered_review_notes": current_review.get("notes") if current_review else None,
+        "rendered_reviewed_at": current_review.get("reviewed_at") if current_review else None,
     }
 
 
@@ -265,7 +273,10 @@ def _filter_clips(
     min_rating: float,
     include_reviewed: bool,
     video_id: str | None,
+    status: str = "all",
 ) -> list[dict[str, Any]]:
+    if status not in {"all", "pending", "reviewed"}:
+        status = "all"
     filtered = []
     for clip in clips:
         if video_id and clip.get("video_id") != video_id:
@@ -273,6 +284,10 @@ def _filter_clips(
         if _to_float(clip.get("review_rating")) < min_rating:
             continue
         if not include_reviewed and clip.get("already_reviewed"):
+            continue
+        if status == "pending" and clip.get("already_reviewed"):
+            continue
+        if status == "reviewed" and not clip.get("already_reviewed"):
             continue
         filtered.append(clip)
     return filtered

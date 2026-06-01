@@ -290,6 +290,28 @@ Reviews made in the local review app are saved to `backend/app/storage/reviews/r
 
 Rendered app reviews are enriched from the latest `approved_clips_plan_*.json` when possible, including title, rank, timestamps, YouTube URL, source quality, ranking quality, sponsor/product score, and topic merge score. If a review with reason `teste_api` is present, `analyze_feedback_dataset` prints a warning before calibration.
 
+## ClipRadar 0.5.24 - Review App Polish + Queue Controls
+
+The Flutter review app now has a more comfortable queue workflow for reviewing many rendered clips. It shows a compact summary, queue counts, filters for pending/reviewed/all clips, a session-only skip list, a reviewed clips history, review editing, required rating/status/reason validation, safer save loading states, and an `Abrir YouTube` action for the original video URL.
+
+Start the local API:
+
+```powershell
+cd backend
+.\.ven\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Run on a real Android device over USB:
+
+```powershell
+cd review_app
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb reverse tcp:8000 tcp:8000
+flutter run -d 4eb16e24 --dart-define=API_BASE_URL=http://127.0.0.1:8000
+```
+
+Reviews continue to be saved in `backend/app/storage/reviews/rendered_clip_reviews.json`. The app does not download, render, transcribe, publish, or call external AI.
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

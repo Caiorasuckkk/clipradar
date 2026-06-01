@@ -17,6 +17,7 @@ class ReviewClip {
     required this.outputFilename,
     required this.videoUrl,
     required this.alreadyReviewed,
+    required this.currentReview,
   });
 
   final String clipId;
@@ -36,6 +37,7 @@ class ReviewClip {
   final String outputFilename;
   final String videoUrl;
   final bool alreadyReviewed;
+  final RenderedReview? currentReview;
 
   factory ReviewClip.fromJson(Map<String, dynamic> json) {
     return ReviewClip(
@@ -56,6 +58,11 @@ class ReviewClip {
       outputFilename: _string(json['output_filename']),
       videoUrl: _string(json['video_url']),
       alreadyReviewed: json['already_reviewed'] == true,
+      currentReview: json['current_review'] is Map<String, dynamic>
+          ? RenderedReview.fromJson(
+              json['current_review'] as Map<String, dynamic>,
+            )
+          : null,
     );
   }
 
@@ -81,5 +88,34 @@ class ReviewClip {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '');
+  }
+}
+
+class RenderedReview {
+  const RenderedReview({
+    required this.status,
+    required this.rating,
+    required this.reason,
+    required this.notes,
+    required this.reviewedAt,
+    required this.updatedAt,
+  });
+
+  final String status;
+  final int? rating;
+  final String reason;
+  final String notes;
+  final String reviewedAt;
+  final String? updatedAt;
+
+  factory RenderedReview.fromJson(Map<String, dynamic> json) {
+    return RenderedReview(
+      status: json['status']?.toString() ?? '',
+      rating: ReviewClip._int(json['rating']),
+      reason: json['reason']?.toString() ?? '',
+      notes: json['notes']?.toString() ?? '',
+      reviewedAt: json['reviewed_at']?.toString() ?? '',
+      updatedAt: json['updated_at']?.toString(),
+    );
   }
 }

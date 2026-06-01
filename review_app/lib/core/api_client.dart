@@ -19,6 +19,18 @@ class ApiClient {
 
   String exportUrl(String filename) => '$baseUrl/exports/$filename';
 
+  Future<List<ReviewClip>> fetchClips({String status = 'all'}) async {
+    final response = await _client.get(
+      _uri('/review/clips', {'status': status}),
+    );
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final clips = payload['clips'] as List<dynamic>? ?? [];
+    return clips
+        .map((item) => ReviewClip.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<ReviewClip?> fetchNextClip() async {
     final response = await _client.get(_uri('/review/clips/next'));
     _throwIfBad(response);
