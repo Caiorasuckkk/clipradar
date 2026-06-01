@@ -312,6 +312,20 @@ flutter run -d 4eb16e24 --dart-define=API_BASE_URL=http://127.0.0.1:8000
 
 Reviews continue to be saved in `backend/app/storage/reviews/rendered_clip_reviews.json`. The app does not download, render, transcribe, publish, or call external AI.
 
+## ClipRadar 0.5.25 - Vertical 9:16 Renderer
+
+Generate simple vertical versions of already rendered clips:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.render_vertical_clips --dry-run --limit 1
+.\.ven\Scripts\python.exe -m app.jobs.render_vertical_clips --limit 1
+.\.ven\Scripts\python.exe -m app.jobs.render_vertical_clips --video-id Jc9Ydqmjcew --overwrite
+```
+
+The job reads `.mp4` files from `backend/app/storage/exports` and writes 1080x1920 vertical files to `backend/app/storage/vertical_exports`. The layout uses the clip itself as a blurred darkened background, with the original video centered sharply in front. It preserves audio and exports h264/aac with `+faststart`.
+
+This step does not add subtitles, titles, logos, captions, publishing, downloads, Whisper, OpenAI, or YouTube rendering.
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

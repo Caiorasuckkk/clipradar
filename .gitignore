@@ -19,4 +19,5 @@ backend/app/storage/transcripts/*
 backend/app/storage/transcripts/*.json
 backend/app/storage/clips/*
 backend/app/storage/clips/*.json
+backend/app/storage/vertical_exports/*
 backend/app/storage/videos/*
