@@ -100,6 +100,13 @@ class FeedbackCalibration:
     strong_non_content_reasons: list[str]
     sponsor_rejection_count: int
     topic_merge_adjustment_count: int
+    feedback_origin_counts: dict[str, int]
+    source_collection_counts: dict[str, int]
+    rendered_reviews_count: int
+    rendered_average_rating: float
+    rendered_reason_counts: dict[str, int]
+    rendered_video_ids: list[str]
+    has_test_reviews: bool
 
 
 @dataclass
@@ -136,6 +143,21 @@ class FeedbackCalibrationService:
         clips = [clip for clip in payload.get("clips", []) if isinstance(clip, dict)]
         status_counts = Counter(str(clip.get("review_status", "")) for clip in clips)
         reason_counts = Counter(str(clip.get("review_reason", "")) for clip in clips)
+        feedback_origin_counts = Counter(str(clip.get("feedback_origin") or "terminal_review") for clip in clips)
+        source_collection_counts = Counter(str(clip.get("source_collection") or "") for clip in clips)
+        rendered_clips = [
+            clip
+            for clip in clips
+            if clip.get("source_collection") == "rendered_clip_reviews"
+            or clip.get("feedback_origin") == "rendered_app_review"
+        ]
+        rendered_ratings: list[float] = []
+        for clip in rendered_clips:
+            try:
+                rendered_ratings.append(float(clip.get("review_rating")))
+            except (TypeError, ValueError):
+                pass
+        rendered_reason_counts = Counter(str(clip.get("review_reason") or "") for clip in rendered_clips)
         ratings: dict[str, list[float]] = defaultdict(list)
         start_diffs: list[float] = []
         end_diffs: list[float] = []
@@ -198,6 +220,13 @@ class FeedbackCalibrationService:
             topic_merge_adjustment_count=sum(
                 reason_counts.get(reason, 0) for reason in TOPIC_MERGE_ADJUSTMENT_REASONS
             ),
+            feedback_origin_counts=dict(feedback_origin_counts),
+            source_collection_counts=dict(source_collection_counts),
+            rendered_reviews_count=len(rendered_clips),
+            rendered_average_rating=round(mean(rendered_ratings), 2) if rendered_ratings else 0.0,
+            rendered_reason_counts=dict(rendered_reason_counts),
+            rendered_video_ids=sorted({str(clip.get("video_id") or "") for clip in rendered_clips if clip.get("video_id")}),
+            has_test_reviews=reason_counts.get("teste_api", 0) > 0,
         )
 
     def analyzer_recommendations(self) -> list[str]:
@@ -365,6 +394,13 @@ class FeedbackCalibrationService:
             strong_non_content_reasons=[],
             sponsor_rejection_count=0,
             topic_merge_adjustment_count=0,
+            feedback_origin_counts={},
+            source_collection_counts={},
+            rendered_reviews_count=0,
+            rendered_average_rating=0.0,
+            rendered_reason_counts={},
+            rendered_video_ids=[],
+            has_test_reviews=False,
         )
 
     @staticmethod
@@ -395,6 +431,13 @@ class FeedbackCalibrationService:
         score += approved * 0.45
         score += needs_adjustment * 0.15
         score -= rejected * 0.9
+        rendered_count = sum(
+            1
+            for clip in clips
+            if clip.get("feedback_origin") == "rendered_app_review"
+            or clip.get("source_collection") == "rendered_clip_reviews"
+        )
+        score += min(0.4, rendered_count * 0.1)
         score -= weak_count * 1.15
         if ratings:
             score += (average_rating - 3.0) * 1.4

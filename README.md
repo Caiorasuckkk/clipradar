@@ -277,6 +277,19 @@ Export rendered reviews for future dataset integration:
 .\.ven\Scripts\python.exe -m app.jobs.export_rendered_reviews_dataset
 ```
 
+## ClipRadar 0.5.23 - Sync Rendered Reviews into Feedback Calibration
+
+Reviews made in the local review app are saved to `backend/app/storage/reviews/rendered_clip_reviews.json` and are now included in the regular feedback dataset export. They appear with `source_collection=rendered_clip_reviews` and `feedback_origin=rendered_app_review`, so the analyzer can learn from reviews made against the rendered `.mp4` clips while keeping terminal reviews separate.
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.export_feedback_dataset
+.\.ven\Scripts\python.exe -m app.jobs.analyze_feedback_dataset
+.\.ven\Scripts\python.exe -m app.jobs.list_rendered_reviews
+.\.ven\Scripts\python.exe -m app.jobs.list_rendered_reviews --reason teste_api
+```
+
+Rendered app reviews are enriched from the latest `approved_clips_plan_*.json` when possible, including title, rank, timestamps, YouTube URL, source quality, ranking quality, sponsor/product score, and topic merge score. If a review with reason `teste_api` is present, `analyze_feedback_dataset` prints a warning before calibration.
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

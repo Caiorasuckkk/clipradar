@@ -1,0 +1,22 @@
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+textarea::placeholder {
+  color: #4b5563;
+}
+
+textarea {
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}

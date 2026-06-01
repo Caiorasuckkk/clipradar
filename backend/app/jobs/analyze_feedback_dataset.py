@@ -15,6 +15,29 @@ def main() -> None:
     print(f"approved: {calibration.status_counts.get('approved', 0)}")
     print(f"rejected: {calibration.status_counts.get('rejected', 0)}")
     print(f"needs_adjustment: {calibration.status_counts.get('needs_adjustment', 0)}")
+    print(f"rendered reviews incluídas: {calibration.rendered_reviews_count}")
+    print(f"média rendered reviews: {calibration.rendered_average_rating}")
+    if calibration.has_test_reviews:
+        print('WARNING: Há reviews de teste no dataset; considere corrigir antes de calibrar.')
+    print("")
+    print("Count por feedback_origin:")
+    for origin, count in sorted(calibration.feedback_origin_counts.items()):
+        print(f"- {origin}: {count}")
+    print("")
+    print("Count por source_collection:")
+    for source_collection, count in sorted(calibration.source_collection_counts.items()):
+        print(f"- {source_collection}: {count}")
+    print("")
+    print("Top reasons do app:")
+    for reason, count in sorted(
+        calibration.rendered_reason_counts.items(),
+        key=lambda item: (-item[1], item[0]),
+    )[:10]:
+        print(f"- {reason}: {count}")
+    print("")
+    print("Vídeos com rendered reviews:")
+    for video_id in calibration.rendered_video_ids:
+        print(f"- {video_id}")
     print("")
     print("Top reasons positivos:")
     for reason in calibration.positive_reasons:
