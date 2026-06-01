@@ -212,6 +212,38 @@ backend/app/storage/reports/podcast_discovery_report_YYYYMMDD_HHMM.md
 backend/app/storage/reports/podcast_discovery_report_YYYYMMDD_HHMM.json
 ```
 
+## ClipRadar 0.5.19 - Export Approved Clips Plan
+
+Export a JSON and Markdown plan with manually approved clips that are ready for a later FFmpeg cutting step:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.export_approved_clips_plan
+```
+
+This does not generate videos, download media, transcribe audio, or call external AI. It only reads existing `*_clips.json` review data and prepares `approved_clips_plan_YYYYMMDD_HHMM` files in `backend/app/storage/reports`.
+
+## ClipRadar 0.5.20 - FFmpeg Clip Renderer
+
+Render approved clips from the latest approved clips plan:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.render_approved_clips --dry-run --limit 1
+.\.ven\Scripts\python.exe -m app.jobs.render_approved_clips --limit 1
+.\.ven\Scripts\python.exe -m app.jobs.render_approved_clips --video-id Jc9Ydqmjcew --rank 2
+```
+
+The renderer reads `approved_clips_plan_*.json`, uses `final_start_seconds` and `final_end_seconds`, and writes raw horizontal `.mp4` clips to `backend/app/storage/exports`. It does not create vertical edits, subtitles, thumbnails, or publications.
+
+### ClipRadar 0.5.20.1 - Download Missing Source
+
+By default, missing source videos are still reported as `missing_source`. To allow the renderer to fetch the source video with `yt-dlp` only when needed, pass `--download-missing`:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.render_approved_clips --video-id Sfg2S4DEGo0 --rank 1 --download-missing --overwrite
+```
+
+This downloads the source to `backend/app/storage/videos/{video_id}.mp4`, then renders the approved clip. It does not run Whisper, transcribe, call OpenAI, or publish anything.
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

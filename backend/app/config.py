@@ -86,6 +86,7 @@ STORAGE_TRENDS_DIR = Path(__file__).resolve().parent / "storage" / "trends"
 STORAGE_DOWNLOADS_DIR = Path(__file__).resolve().parent / "storage" / "downloads"
 STORAGE_TRANSCRIPTS_DIR = Path(__file__).resolve().parent / "storage" / "transcripts"
 STORAGE_CLIPS_DIR = Path(__file__).resolve().parent / "storage" / "clips"
+STORAGE_EXPORTS_DIR = Path(__file__).resolve().parent / "storage" / "exports"
 STORAGE_VIDEOS_DIR = Path(__file__).resolve().parent / "storage" / "videos"
 STORAGE_REFERENCE_DIR = Path(__file__).resolve().parent / "storage" / "reference"
 
