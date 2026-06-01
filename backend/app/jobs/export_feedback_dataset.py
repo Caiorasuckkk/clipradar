@@ -12,6 +12,7 @@ from app import config
 
 REVIEWED_STATUSES = {"approved", "rejected", "needs_adjustment"}
 RENDERED_REVIEWS_PATH = config.STORAGE_REVIEWS_DIR / "rendered_clip_reviews.json"
+CANDIDATE_REVIEWS_PATH = config.STORAGE_CANDIDATE_REVIEWS_DIR / "candidate_clip_reviews.json"
 
 
 def main() -> None:
@@ -35,7 +36,8 @@ def main() -> None:
         if include_rendered_reviews
         else []
     )
-    records = terminal_records + rendered_records
+    candidate_records = _candidate_review_records()
+    records = terminal_records + rendered_records + candidate_records
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     config.STORAGE_TRENDS_DIR.parent.joinpath("reports").mkdir(parents=True, exist_ok=True)
@@ -47,6 +49,7 @@ def main() -> None:
         "clips_count": len(records),
         "terminal_reviews_count": len(terminal_records),
         "rendered_reviews_count": len(rendered_records),
+        "candidate_reviews_count": len(candidate_records),
         "included_statuses": sorted(REVIEWED_STATUSES),
         "clips": records,
     }
@@ -59,6 +62,7 @@ def main() -> None:
     print(f"clips revisados incluídos: {len(records)}")
     print(f"terminal reviews: {len(terminal_records)}")
     print(f"rendered app reviews: {len(rendered_records)}")
+    print(f"candidate mobile reviews: {len(candidate_records)}")
     print(f"JSON: {json_path}")
     print(f"Markdown: {md_path}")
     print("pending_review incluídos: 0")
@@ -163,6 +167,57 @@ def _rendered_review_records() -> list[dict[str, Any]]:
     return records
 
 
+def _candidate_review_records() -> list[dict[str, Any]]:
+    reviews = _load_json_dict(CANDIDATE_REVIEWS_PATH)
+    queue_index = _candidate_queue_index()
+    records: list[dict[str, Any]] = []
+    for candidate_id, review in sorted(reviews.items()):
+        if not isinstance(review, dict):
+            continue
+        status = str(review.get("status") or "")
+        if status not in REVIEWED_STATUSES:
+            continue
+        item = queue_index.get(candidate_id, {})
+        records.append(
+            {
+                "source_collection": "candidate_clip_reviews",
+                "feedback_origin": "candidate_mobile_review",
+                "source_type": "candidate_preview",
+                "target": "candidate_clip",
+                "candidate_id": candidate_id,
+                "video_id": review.get("video_id") or item.get("video_id"),
+                "video_title": item.get("video_title", ""),
+                "rank": review.get("rank") or item.get("rank"),
+                "start_seconds": item.get("start_seconds"),
+                "end_seconds": item.get("end_seconds"),
+                "final_start_seconds": item.get("final_start_seconds"),
+                "final_end_seconds": item.get("final_end_seconds"),
+                "duration_seconds": item.get("duration_seconds"),
+                "youtube_url": item.get("youtube_url", ""),
+                "url": item.get("youtube_url", ""),
+                "status": status,
+                "rating": review.get("rating"),
+                "reason": review.get("reason", ""),
+                "notes": review.get("notes", ""),
+                "review_status": status,
+                "review_rating": review.get("rating"),
+                "review_reason": review.get("reason", ""),
+                "review_notes": review.get("notes", ""),
+                "ideal_start_seconds": review.get("ideal_start_seconds"),
+                "ideal_end_seconds": review.get("ideal_end_seconds"),
+                "reviewed_at": review.get("reviewed_at"),
+                "source_quality_score": item.get("source_quality_score"),
+                "source_quality_tier": item.get("source_quality_tier"),
+                "ranking_quality_score": item.get("ranking_quality_score"),
+                "ranking_quality_tier": item.get("ranking_quality_tier"),
+                "score": item.get("ranking_quality_score"),
+                "text": "",
+                "first_sentence": "",
+            }
+        )
+    return records
+
+
 def _markdown_report(payload: dict[str, Any]) -> str:
     lines = [
         "# ClipRadar Feedback Dataset",
@@ -171,6 +226,7 @@ def _markdown_report(payload: dict[str, Any]) -> str:
         f"Reviewed clips: {payload['clips_count']}",
         f"Terminal reviews: {payload.get('terminal_reviews_count', 0)}",
         f"Rendered app reviews: {payload.get('rendered_reviews_count', 0)}",
+        f"Candidate mobile reviews: {payload.get('candidate_reviews_count', 0)}",
         "",
         "Only manually reviewed clips are included. `pending_review` clips are excluded.",
         "",
@@ -230,6 +286,36 @@ def _load_rendered_reviews() -> dict[str, dict[str, Any]]:
     if not isinstance(payload, dict):
         return {}
     return {str(key): value for key, value in payload.items() if isinstance(value, dict)}
+
+
+def _load_json_dict(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): value for key, value in payload.items() if isinstance(value, dict)}
+
+
+def _candidate_queue_index() -> dict[str, dict[str, Any]]:
+    path = config.STORAGE_CANDIDATE_QUEUE_DIR / "candidate_review_queue.json"
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except Exception:
+        return {}
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    return {
+        str(item.get("candidate_id")): item
+        for item in items
+        if isinstance(item, dict) and item.get("candidate_id")
+    }
 
 
 def _latest_plan_index() -> dict[str, Any]:

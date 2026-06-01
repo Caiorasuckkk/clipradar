@@ -14,6 +14,9 @@ backend/app/storage/cache/*.png
 backend/app/storage/cache/**/*.json
 backend/app/storage/cache/yt_trending_debug.html
 backend/app/storage/cache/ffmpeg/*
+backend/app/storage/candidate_previews/*
+backend/app/storage/candidate_queue/*
+backend/app/storage/candidate_reviews/*
 backend/app/storage/clip_transcripts/*
 backend/app/storage/downloads/*
 backend/app/storage/exports/*

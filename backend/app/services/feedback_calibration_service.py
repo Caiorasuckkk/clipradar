@@ -105,6 +105,7 @@ class FeedbackCalibration:
     rendered_reviews_count: int
     rendered_average_rating: float
     rendered_reason_counts: dict[str, int]
+    candidate_reason_counts: dict[str, int]
     rendered_video_ids: list[str]
     has_test_reviews: bool
 
@@ -158,6 +159,13 @@ class FeedbackCalibrationService:
             except (TypeError, ValueError):
                 pass
         rendered_reason_counts = Counter(str(clip.get("review_reason") or "") for clip in rendered_clips)
+        candidate_clips = [
+            clip
+            for clip in clips
+            if clip.get("source_collection") == "candidate_clip_reviews"
+            or clip.get("feedback_origin") == "candidate_mobile_review"
+        ]
+        candidate_reason_counts = Counter(str(clip.get("review_reason") or "") for clip in candidate_clips)
         ratings: dict[str, list[float]] = defaultdict(list)
         start_diffs: list[float] = []
         end_diffs: list[float] = []
@@ -225,6 +233,7 @@ class FeedbackCalibrationService:
             rendered_reviews_count=len(rendered_clips),
             rendered_average_rating=round(mean(rendered_ratings), 2) if rendered_ratings else 0.0,
             rendered_reason_counts=dict(rendered_reason_counts),
+            candidate_reason_counts=dict(candidate_reason_counts),
             rendered_video_ids=sorted({str(clip.get("video_id") or "") for clip in rendered_clips if clip.get("video_id")}),
             has_test_reviews=reason_counts.get("teste_api", 0) > 0,
         )
@@ -399,6 +408,7 @@ class FeedbackCalibrationService:
             rendered_reviews_count=0,
             rendered_average_rating=0.0,
             rendered_reason_counts={},
+            candidate_reason_counts={},
             rendered_video_ids=[],
             has_test_reviews=False,
         )

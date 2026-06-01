@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'screens/final_clips_screen.dart';
+import 'screens/candidate_clips_screen.dart';
 import 'screens/review_clip_screen.dart';
 
 void main() {
@@ -61,7 +62,11 @@ class _ReviewTabsState extends State<_ReviewTabs> {
     return Scaffold(
       body: IndexedStack(
         index: _index,
-        children: const [ReviewClipScreen(), FinalClipsScreen()],
+        children: const [
+          ReviewClipScreen(),
+          FinalClipsScreen(),
+          CandidateClipsScreen(),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
@@ -76,6 +81,10 @@ class _ReviewTabsState extends State<_ReviewTabs> {
           NavigationDestination(
             icon: Icon(Icons.rocket_launch_rounded),
             label: 'Final Clips',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.preview_rounded),
+            label: 'Candidates',
           ),
         ],
       ),

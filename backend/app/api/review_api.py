@@ -19,12 +19,22 @@ from app.services.final_clips_service import (
     load_final_reviews,
     save_final_reviews,
 )
+from app.services.candidate_review_service import (
+    filter_candidate_clips,
+    candidate_summary,
+    is_safe_candidate_id,
+    is_safe_preview_filename,
+    load_candidate_queue,
+    load_candidate_reviews,
+    save_candidate_reviews,
+)
 
 
 router = APIRouter()
 
 VALID_REVIEW_STATUSES = {"approved", "rejected", "needs_adjustment"}
 VALID_FINAL_REVIEW_STATUSES = {"ready_to_post", "do_not_post", "needs_edit"}
+VALID_CANDIDATE_REVIEW_STATUSES = {"approved", "rejected", "needs_adjustment"}
 REVIEWS_PATH = config.STORAGE_REVIEWS_DIR / "rendered_clip_reviews.json"
 
 
@@ -61,6 +71,29 @@ class FinalClipReviewPayload(BaseModel):
     def validate_status(cls, value: str) -> str:
         if value not in VALID_FINAL_REVIEW_STATUSES:
             allowed = ", ".join(sorted(VALID_FINAL_REVIEW_STATUSES))
+            raise ValueError(f"status deve ser um de: {allowed}")
+        return value
+
+    @validator("reason")
+    def validate_reason(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("reason é obrigatório")
+        return stripped
+
+
+class CandidateClipReviewPayload(BaseModel):
+    status: str
+    rating: int = Field(..., ge=1, le=5)
+    reason: str = Field(..., min_length=1)
+    notes: str = ""
+    ideal_start_seconds: float | None = None
+    ideal_end_seconds: float | None = None
+
+    @validator("status")
+    def validate_status(cls, value: str) -> str:
+        if value not in VALID_CANDIDATE_REVIEW_STATUSES:
+            allowed = ", ".join(sorted(VALID_CANDIDATE_REVIEW_STATUSES))
             raise ValueError(f"status deve ser um de: {allowed}")
         return value
 
@@ -246,6 +279,89 @@ def serve_final_export(filename: str) -> FileResponse:
     return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
+@router.get("/candidate/clips")
+def list_candidate_clips(
+    status: str = Query("pending"),
+    video_id: str | None = Query(None),
+    include_missing_previews: bool = Query(False),
+) -> dict[str, Any]:
+    clips = filter_candidate_clips(
+        load_candidate_queue(),
+        status=status,
+        video_id=video_id,
+        include_missing_previews=include_missing_previews,
+    )
+    return {"clips": clips, "count": len(clips)}
+
+
+@router.get("/candidate/clips/next")
+def get_next_candidate_clip(
+    video_id: str | None = Query(None),
+    include_missing_previews: bool = Query(False),
+) -> dict[str, Any]:
+    clips = filter_candidate_clips(
+        load_candidate_queue(),
+        status="pending",
+        video_id=video_id,
+        include_missing_previews=include_missing_previews,
+    )
+    if not clips:
+        return {"message": "no_pending_candidate_clips", "clip": None}
+    return {"message": "ok", "clip": clips[0]}
+
+
+@router.get("/candidate/clips/{candidate_id}")
+def get_candidate_clip(candidate_id: str) -> dict[str, Any]:
+    clip = _find_candidate_clip_by_id(candidate_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="candidate_clip_not_found")
+    return clip
+
+
+@router.post("/candidate/clips/{candidate_id}")
+def save_candidate_clip_review(candidate_id: str, payload: CandidateClipReviewPayload) -> dict[str, Any]:
+    clip = _find_candidate_clip_by_id(candidate_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="candidate_clip_not_found")
+    reviews = load_candidate_reviews()
+    now = datetime.utcnow().isoformat()
+    previous = reviews.get(candidate_id, {})
+    review = {
+        "candidate_id": candidate_id,
+        "video_id": clip.get("video_id"),
+        "source_collection": clip.get("source_collection"),
+        "rank": clip.get("rank"),
+        "status": payload.status,
+        "rating": payload.rating,
+        "reason": payload.reason,
+        "notes": payload.notes,
+        "ideal_start_seconds": payload.ideal_start_seconds,
+        "ideal_end_seconds": payload.ideal_end_seconds,
+        "created_at": previous.get("created_at") or now,
+        "reviewed_at": previous.get("reviewed_at") or now,
+        "updated_at": now if previous else None,
+    }
+    reviews[candidate_id] = review
+    save_candidate_reviews(reviews)
+    return {"message": "candidate_review_saved", "review": review}
+
+
+@router.get("/candidate/summary")
+def get_candidate_summary() -> dict[str, Any]:
+    return candidate_summary()
+
+
+@router.get("/candidate_previews/{filename}")
+def serve_candidate_preview(filename: str) -> FileResponse:
+    if not is_safe_preview_filename(filename):
+        raise HTTPException(status_code=404, detail="candidate_preview_not_found")
+    path = (config.STORAGE_CANDIDATE_PREVIEWS_DIR / filename).resolve()
+    previews_dir = config.STORAGE_CANDIDATE_PREVIEWS_DIR.resolve()
+    if path.parent != previews_dir or not path.exists() or path.suffix.lower() != ".mp4":
+        raise HTTPException(status_code=404, detail="candidate_preview_not_found")
+    return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+
 def _load_rendered_clips() -> list[dict[str, Any]]:
     reviews = _load_reviews()
     plan_items = _items_by_output_filename(_load_latest_items("approved_clips_plan_*.json"))
@@ -367,6 +483,15 @@ def _find_final_clip_by_id(final_clip_id: str) -> dict[str, Any] | None:
         return None
     for clip in load_final_clips():
         if clip["final_clip_id"] == final_clip_id:
+            return clip
+    return None
+
+
+def _find_candidate_clip_by_id(candidate_id: str) -> dict[str, Any] | None:
+    if not is_safe_candidate_id(candidate_id):
+        return None
+    for clip in load_candidate_queue():
+        if clip["candidate_id"] == candidate_id:
             return clip
     return None
 

@@ -35,6 +35,14 @@ def main() -> None:
             reason=args.reason,
         )
     ]
+    items.extend(
+        _candidate_plan_items(
+            min_rating=min_rating,
+            allowed_statuses=allowed_statuses,
+            video_id=args.video_id,
+            reason=args.reason,
+        )
+    )
     items.sort(
         key=lambda item: (
             str(item["video_title"]).lower(),
@@ -69,6 +77,9 @@ def main() -> None:
         "diagnostics_count": len(
             [item for item in items if item["source_collection"] == "diagnostic_candidates"]
         ),
+        "candidate_reviews_count": len(
+            [item for item in items if item["source_collection"] == "candidate_clip_reviews"]
+        ),
         "videos_count": len({item["video_id"] for item in items}),
         "items": items,
     }
@@ -80,6 +91,7 @@ def main() -> None:
     print("EXPORT APPROVED CLIPS PLAN")
     print(f"clips approved: {payload['clips_count']}")
     print(f"diagnostics approved: {payload['diagnostics_count']}")
+    print(f"candidate reviews approved: {payload['candidate_reviews_count']}")
     print(f"videos included: {payload['videos_count']}")
     print(f"JSON: {json_path}")
     print(f"Markdown: {md_path}")
@@ -192,6 +204,82 @@ def _plan_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _candidate_plan_items(
+    min_rating: float,
+    allowed_statuses: set[str],
+    video_id: str | None,
+    reason: str | None,
+) -> list[dict[str, Any]]:
+    reviews_path = config.STORAGE_CANDIDATE_REVIEWS_DIR / "candidate_clip_reviews.json"
+    queue_path = config.STORAGE_CANDIDATE_QUEUE_DIR / "candidate_review_queue.json"
+    reviews = _load_json_dict(reviews_path)
+    queue_payload = _load_json(queue_path)
+    queue_items = queue_payload.get("items", []) if isinstance(queue_payload, dict) else []
+    queue_index = {
+        str(item.get("candidate_id")): item
+        for item in queue_items
+        if isinstance(item, dict) and item.get("candidate_id")
+    }
+    items: list[dict[str, Any]] = []
+    for candidate_id, review in reviews.items():
+        status = str(review.get("status") or "")
+        rating = _to_float(review.get("rating"))
+        if status not in allowed_statuses or rating < min_rating:
+            continue
+        if reason and str(review.get("reason") or "") != reason:
+            continue
+        queue_item = queue_index.get(candidate_id)
+        if not queue_item:
+            continue
+        current_video_id = str(queue_item.get("video_id") or review.get("video_id") or "")
+        if video_id and current_video_id != video_id:
+            continue
+        start = _to_float(queue_item.get("start_seconds"))
+        end = _to_float(queue_item.get("end_seconds"))
+        final_start = _to_float(review.get("ideal_start_seconds") or queue_item.get("final_start_seconds") or start)
+        final_end = _to_float(review.get("ideal_end_seconds") or queue_item.get("final_end_seconds") or end)
+        rank = int(queue_item.get("rank") or review.get("rank") or 0)
+        review_reason = str(review.get("reason") or "sem_reason")
+        items.append(
+            {
+                "video_id": current_video_id,
+                "video_title": queue_item.get("video_title", ""),
+                "source_quality_score": queue_item.get("source_quality_score"),
+                "source_quality_tier": queue_item.get("source_quality_tier"),
+                "rank": rank,
+                "source_collection": "candidate_clip_reviews",
+                "review_status": status,
+                "review_rating": review.get("rating"),
+                "review_reason": review_reason,
+                "review_notes": review.get("notes", ""),
+                "start_seconds": start,
+                "end_seconds": end,
+                "duration_seconds": _to_float(queue_item.get("duration_seconds")) or max(0.0, end - start),
+                "suggested_trim_start_seconds": None,
+                "suggested_trim_end_seconds": None,
+                "suggested_trim_duration_seconds": None,
+                "final_start_seconds": round(final_start, 2),
+                "final_end_seconds": round(final_end, 2),
+                "final_duration_seconds": round(max(0.0, final_end - final_start), 2),
+                "use_suggested_trim": False,
+                "youtube_url": queue_item.get("youtube_url", ""),
+                "output_filename": _output_filename(current_video_id, rank, rating, review_reason, final_start, final_end),
+                "clip_version": None,
+                "recommended_version": None,
+                "ranking_quality_score": queue_item.get("ranking_quality_score"),
+                "ranking_quality_tier": queue_item.get("ranking_quality_tier"),
+                "sponsor_product_score": None,
+                "topic_merge_score": None,
+                "needs_trim": status == "needs_adjustment",
+                "trim_reason": review_reason if status == "needs_adjustment" else "",
+                "created_at": review.get("reviewed_at"),
+                "exported_at": datetime.utcnow().isoformat(),
+                "candidate_id": candidate_id,
+            }
+        )
+    return items
+
+
 def _markdown_report(payload: dict[str, Any]) -> str:
     lines = [
         "# Approved Clips Plan",
@@ -242,6 +330,21 @@ def _youtube_url(payload: dict[str, Any], video_id: str, start_seconds: float) -
     if re.search(r"[?&]t=", base_url):
         return base_url
     return f"{base_url}{separator}t={int(start_seconds)}s"
+
+
+def _load_json(path) -> Any:
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            return json.load(file)
+    except Exception:
+        return {}
+
+
+def _load_json_dict(path) -> dict[str, dict[str, Any]]:
+    payload = _load_json(path)
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): value for key, value in payload.items() if isinstance(value, dict)}
 
 
 def _output_filename(

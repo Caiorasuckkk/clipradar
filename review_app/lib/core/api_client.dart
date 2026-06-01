@@ -6,6 +6,8 @@ import '../models/review_clip.dart';
 import '../models/review_summary.dart';
 import '../models/final_clip.dart';
 import '../models/final_summary.dart';
+import '../models/candidate_clip.dart';
+import '../models/candidate_summary.dart';
 import 'app_config.dart';
 
 class ApiClient {
@@ -22,6 +24,8 @@ class ApiClient {
   String exportUrl(String filename) => '$baseUrl/exports/$filename';
 
   String finalExportUrl(String filename) => '$baseUrl/final_exports/$filename';
+  String candidatePreviewUrl(String filename) =>
+      '$baseUrl/candidate_previews/$filename';
 
   Future<List<ReviewClip>> fetchClips({String status = 'all'}) async {
     final response = await _client.get(
@@ -118,6 +122,50 @@ class ApiClient {
         'rating': rating,
         'reason': reason,
         'notes': notes,
+      }),
+    );
+    _throwIfBad(response);
+  }
+
+  Future<List<CandidateClip>> fetchCandidateClips({
+    String status = 'pending',
+  }) async {
+    final response = await _client.get(
+      _uri('/candidate/clips', {'status': status}),
+    );
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final clips = payload['clips'] as List<dynamic>? ?? [];
+    return clips
+        .map((item) => CandidateClip.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<CandidateSummary> fetchCandidateSummary() async {
+    final response = await _client.get(_uri('/candidate/summary'));
+    _throwIfBad(response);
+    return CandidateSummary.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> saveCandidateReview({
+    required String candidateId,
+    required String status,
+    required int rating,
+    required String reason,
+    required String notes,
+  }) async {
+    final response = await _client.post(
+      _uri('/candidate/clips/$candidateId'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'status': status,
+        'rating': rating,
+        'reason': reason,
+        'notes': notes,
+        'ideal_start_seconds': null,
+        'ideal_end_seconds': null,
       }),
     );
     _throwIfBad(response);

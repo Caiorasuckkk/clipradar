@@ -429,6 +429,50 @@ Run the ready-to-post preparation pipeline from one command:
 
 The pipeline executes the existing jobs in order: approved plan export, approved clip render, vertical render, clean final export, final metadata export, and ready-to-post package export. It does not publish, does not use OpenAI or Whisper, and does not run the subtitle pipeline. Start with `--dry-run --limit 1` to inspect the commands before running actual rendering/copying.
 
+## ClipRadar 0.5.31 - Candidate Preview Queue for Mobile Review
+
+Generate a mobile review queue for newly processed candidates:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.export_candidate_review_queue --video-id IKFMtoU9TGE,lJ3nef7UvLM,D7CpjXX4Voc --include-diagnostics --overwrite
+.\.ven\Scripts\python.exe -m app.jobs.render_candidate_previews --download-missing --overwrite
+```
+
+### ClipRadar 0.5.31.1 - Candidate Preview Availability Gate
+
+The candidate API now returns only candidates whose local preview `.mp4` exists by default. This prevents the Android player from opening `/candidate_previews/...` URLs that would return 404. Use `include_missing_previews=true` only for diagnostics.
+
+Recommended flow:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.export_candidate_review_queue --video-id IKFMtoU9TGE,lJ3nef7UvLM,D7CpjXX4Voc --include-diagnostics --overwrite
+.\.ven\Scripts\python.exe -m app.jobs.list_candidate_preview_status --missing-only
+.\.ven\Scripts\python.exe -m app.jobs.render_candidate_previews --only-missing --download-missing --overwrite
+.\.ven\Scripts\python.exe -m app.jobs.render_candidate_previews --only-missing --download-missing --overwrite --max-missing 5
+```
+
+`GET /candidate/clips?status=pending` and `GET /candidate/clips/next` now skip missing previews. `GET /candidate/clips?status=pending&include_missing_previews=true` includes them for inspection. `GET /candidate/summary` reports `preview_ready` and `missing_preview`.
+
+Candidate reviews are saved in `backend/app/storage/candidate_reviews/candidate_clip_reviews.json` through the local API:
+
+```text
+GET  /candidate/clips
+GET  /candidate/clips/next
+GET  /candidate/clips/{candidate_id}
+GET  /candidate_previews/{filename}
+POST /candidate/clips/{candidate_id}
+GET  /candidate/summary
+```
+
+The Android review app now has a `Candidate Clips` tab for previewing recommended clips and diagnostic candidates, then saving `approved`, `rejected`, or `needs_adjustment` feedback. Candidate mobile reviews are included in `export_feedback_dataset`, surfaced in `analyze_feedback_dataset`, and approved candidates with rating >= 4 are included by `export_approved_clips_plan`.
+
+Run the app locally:
+
+```powershell
+adb reverse tcp:8000 tcp:8000
+flutter run -d 4eb16e24 --dart-define=API_BASE_URL=http://127.0.0.1:8000
+```
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

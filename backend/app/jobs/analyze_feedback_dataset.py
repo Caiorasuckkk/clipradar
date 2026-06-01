@@ -16,6 +16,7 @@ def main() -> None:
     print(f"rejected: {calibration.status_counts.get('rejected', 0)}")
     print(f"needs_adjustment: {calibration.status_counts.get('needs_adjustment', 0)}")
     print(f"rendered reviews incluídas: {calibration.rendered_reviews_count}")
+    print(f"candidate reviews incluídas: {calibration.source_collection_counts.get('candidate_clip_reviews', 0)}")
     print(f"média rendered reviews: {calibration.rendered_average_rating}")
     if calibration.has_test_reviews:
         print('WARNING: Há reviews de teste no dataset; considere corrigir antes de calibrar.')
@@ -31,6 +32,17 @@ def main() -> None:
     print("Top reasons do app:")
     for reason, count in sorted(
         calibration.rendered_reason_counts.items(),
+        key=lambda item: (-item[1], item[0]),
+    )[:10]:
+        print(f"- {reason}: {count}")
+    print("")
+    print("Top reasons dos candidatos:")
+    for reason, count in sorted(
+        (
+            (reason, count)
+            for reason, count in calibration.candidate_reason_counts.items()
+            if reason
+        ),
         key=lambda item: (-item[1], item[0]),
     )[:10]:
         print(f"- {reason}: {count}")

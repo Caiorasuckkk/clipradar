@@ -26,6 +26,14 @@ const reasonOptions = [
   ReasonOption('sem_contexto', 'sem contexto', 'Negativos', Color(0xFFEF4444)),
   ReasonOption('nao_prendeu', 'nao prendeu', 'Negativos', Color(0xFFEF4444)),
   ReasonOption('propaganda', 'propaganda', 'Negativos', Color(0xFFEF4444)),
+  ReasonOption(
+    'emendou_assuntos',
+    'emendou assuntos',
+    'Negativos',
+    Color(0xFFEF4444),
+  ),
+  ReasonOption('muito_longo', 'muito longo', 'Ajustes', Color(0xFFF59E0B)),
+  ReasonOption('video_fraco', 'video fraco', 'Negativos', Color(0xFFEF4444)),
 ];
 
 class ReasonChips extends StatelessWidget {
