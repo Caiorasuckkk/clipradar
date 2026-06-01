@@ -326,6 +326,97 @@ The job reads `.mp4` files from `backend/app/storage/exports` and writes 1080x19
 
 This step does not add subtitles, titles, logos, captions, publishing, downloads, Whisper, OpenAI, or YouTube rendering.
 
+## ClipRadar 0.5.26 - Subtitle Burn-in Renderer
+
+Burn simple segment-based subtitles into vertical clips:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.render_subtitled_clips --dry-run --limit 1
+.\.ven\Scripts\python.exe -m app.jobs.render_subtitled_clips --limit 1
+.\.ven\Scripts\python.exe -m app.jobs.render_subtitled_clips --video-id Jc9Ydqmjcew --overwrite
+```
+
+The job reads `backend/app/storage/vertical_exports/*.mp4`, finds the matching existing transcript in `backend/app/storage/transcripts/{video_id}.json`, generates an `.ass` subtitle file in `backend/app/storage/subtitles`, and writes the burned-in result to `backend/app/storage/subtitled_exports`.
+
+Subtitles are simple transcript-segment blocks, wrapped to short two-line captions. This is not word-by-word captioning yet, and it does not use Whisper, OpenAI, downloads, YouTube rendering, titles, logos, or publishing.
+
+### ClipRadar 0.5.26.1 - Clip-level Subtitle Transcription
+
+For better final subtitles, transcribe only the short rendered clips from `backend/app/storage/exports` with a stronger local Whisper model:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.transcribe_rendered_clips --dry-run --limit 1
+.\.ven\Scripts\python.exe -m app.jobs.transcribe_rendered_clips --limit 1 --model base --language pt
+.\.ven\Scripts\python.exe -m app.jobs.transcribe_rendered_clips --video-id Jc9Ydqmjcew --overwrite --model base --language pt
+```
+
+Then regenerate burned-in subtitles:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.render_subtitled_clips --video-id Jc9Ydqmjcew --overwrite --limit 2
+```
+
+Clip transcripts are saved to `backend/app/storage/clip_transcripts/{clip_id}.json` with relative timestamps. `render_subtitled_clips` prefers those clip-level transcripts when available, then falls back to the older full-video transcripts. This improves subtitle text without retranscribing long podcasts and without using OpenAI, downloads, or publishing.
+
+### ClipRadar 0.5.26.2 - Subtitle Timing QA and Accuracy Fix
+
+Validate clip-level subtitle timing and regenerate subtitles with an optional manual offset:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.transcribe_rendered_clips --video-id Jc9Ydqmjcew --limit 1 --model small --language pt --overwrite --print-text
+.\.ven\Scripts\python.exe -m app.jobs.inspect_clip_subtitle_sync --video-id Jc9Ydqmjcew
+.\.ven\Scripts\python.exe -m app.jobs.render_subtitled_clips --video-id Jc9Ydqmjcew --limit 1 --overwrite
+.\.ven\Scripts\python.exe -m app.jobs.render_subtitled_clips --video-id Jc9Ydqmjcew --limit 1 --overwrite --subtitle-offset -0.5
+```
+
+The transcriber now records clip duration, transcript duration, segment counts, first/last timestamps, model/language used, and flags suspected absolute timestamps. `render_subtitled_clips` prints the transcript source before rendering, uses `clip_transcripts` exclusively when present, keeps clip transcript timestamps relative to the final video, and writes timing warnings/errors into the subtitle report. `inspect_clip_subtitle_sync` compares export, vertical, subtitled, transcript, and ASS files without downloading, using YouTube, OpenAI, or retranscribing long videos.
+
+## ClipRadar 0.5.27 - Clean Final Export
+
+Generate clean final files from already vertical clips:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.render_final_clips --dry-run --limit 1
+.\.ven\Scripts\python.exe -m app.jobs.render_final_clips --limit 1 --overwrite
+.\.ven\Scripts\python.exe -m app.jobs.render_final_clips --video-id Jc9Ydqmjcew --overwrite
+```
+
+The job reads `backend/app/storage/vertical_exports/*.mp4` and writes final 1080x1920 files to `backend/app/storage/final_exports`. The final export is intentionally clean: no identity overlay, subtitles, badge, logo, brand text, or progress bar. By default it uses stream copy/remux to preserve quality, with `--reencode` available when h264/aac output needs to be forced. It does not run Whisper, call OpenAI, download media, use YouTube, publish, or touch the analyzer.
+
+## ClipRadar 0.5.28 - Final Clip Metadata + Final Review Queue
+
+Export metadata for clean final clips and review them before manual posting:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.export_final_clips_metadata
+```
+
+The job reads `backend/app/storage/final_exports/*.mp4`, enriches each item from the latest approved clips plan and rendered clip reviews, and writes `final_clips_metadata_YYYYMMDD_HHMM` JSON/Markdown reports. It does not use FFmpeg rendering, Whisper, OpenAI, downloads, YouTube, or publishing.
+
+Final review API:
+
+```text
+GET  /final/clips
+GET  /final/clips/next
+GET  /final/clips/{final_clip_id}
+GET  /final_exports/{filename}
+POST /final/clips/{final_clip_id}
+GET  /final/summary
+```
+
+Final reviews are saved in `backend/app/storage/final_reviews/final_clip_reviews.json` with statuses `ready_to_post`, `do_not_post`, and `needs_edit`. The Flutter review app now has a second tab, `Final Clips`, for watching final exports and marking which clips are ready for posting.
+
+## ClipRadar 0.5.29 - Ready-to-Post Package Export
+
+Create a manual posting package with only final clips marked as `ready_to_post`:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.export_ready_to_post_package --dry-run
+.\.ven\Scripts\python.exe -m app.jobs.export_ready_to_post_package
+```
+
+The job reads `backend/app/storage/final_exports` plus `backend/app/storage/final_reviews/final_clip_reviews.json`, copies only approved final clips into `backend/app/storage/posting_package/YYYYMMDD_HHMM/videos`, and writes package-level JSON/Markdown plus individual metadata files. It does not publish automatically and does not use OpenAI, Whisper, FFmpeg, downloads, YouTube, or rendering.
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

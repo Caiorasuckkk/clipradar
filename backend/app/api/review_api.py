@@ -12,11 +12,19 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, validator
 
 from app import config
+from app.services.final_clips_service import (
+    filter_final_clips,
+    final_summary,
+    load_final_clips,
+    load_final_reviews,
+    save_final_reviews,
+)
 
 
 router = APIRouter()
 
 VALID_REVIEW_STATUSES = {"approved", "rejected", "needs_adjustment"}
+VALID_FINAL_REVIEW_STATUSES = {"ready_to_post", "do_not_post", "needs_edit"}
 REVIEWS_PATH = config.STORAGE_REVIEWS_DIR / "rendered_clip_reviews.json"
 
 
@@ -32,6 +40,27 @@ class RenderedClipReviewPayload(BaseModel):
     def validate_status(cls, value: str) -> str:
         if value not in VALID_REVIEW_STATUSES:
             allowed = ", ".join(sorted(VALID_REVIEW_STATUSES))
+            raise ValueError(f"status deve ser um de: {allowed}")
+        return value
+
+    @validator("reason")
+    def validate_reason(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("reason é obrigatório")
+        return stripped
+
+
+class FinalClipReviewPayload(BaseModel):
+    status: str
+    rating: int = Field(..., ge=1, le=5)
+    reason: str = Field(..., min_length=1)
+    notes: str = ""
+
+    @validator("status")
+    def validate_status(cls, value: str) -> str:
+        if value not in VALID_FINAL_REVIEW_STATUSES:
+            allowed = ", ".join(sorted(VALID_FINAL_REVIEW_STATUSES))
             raise ValueError(f"status deve ser um de: {allowed}")
         return value
 
@@ -152,6 +181,71 @@ def serve_export(filename: str) -> FileResponse:
     return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
+@router.get("/final/clips")
+def list_final_clips(status: str = Query("pending")) -> dict[str, Any]:
+    clips = filter_final_clips(load_final_clips(), status=status)
+    return {"clips": clips, "count": len(clips)}
+
+
+@router.get("/final/clips/next")
+def get_next_final_clip() -> dict[str, Any]:
+    clips = filter_final_clips(load_final_clips(), status="pending")
+    if not clips:
+        return {"message": "no_pending_final_clips", "clip": None}
+    return {"message": "ok", "clip": clips[0]}
+
+
+@router.get("/final/clips/{final_clip_id}")
+def get_final_clip(final_clip_id: str) -> dict[str, Any]:
+    clip = _find_final_clip_by_id(final_clip_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="final_clip_not_found")
+    return clip
+
+
+@router.post("/final/clips/{final_clip_id}")
+def save_final_clip_review(final_clip_id: str, payload: FinalClipReviewPayload) -> dict[str, Any]:
+    clip = _find_final_clip_by_id(final_clip_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="final_clip_not_found")
+
+    reviews = load_final_reviews()
+    now = datetime.utcnow().isoformat()
+    previous = reviews.get(final_clip_id, {})
+    review = {
+        "final_clip_id": final_clip_id,
+        "clip_id": clip.get("clip_id"),
+        "video_id": clip.get("video_id"),
+        "final_filename": clip.get("final_filename"),
+        "status": payload.status,
+        "rating": payload.rating,
+        "reason": payload.reason,
+        "notes": payload.notes,
+        "created_at": previous.get("created_at") or now,
+        "reviewed_at": previous.get("reviewed_at") or now,
+        "updated_at": now if previous else None,
+    }
+    reviews[final_clip_id] = review
+    save_final_reviews(reviews)
+    return {"message": "final_review_saved", "review": review}
+
+
+@router.get("/final/summary")
+def get_final_summary() -> dict[str, Any]:
+    return final_summary()
+
+
+@router.get("/final_exports/{filename}")
+def serve_final_export(filename: str) -> FileResponse:
+    if not _is_safe_export_filename(filename):
+        raise HTTPException(status_code=404, detail="final_export_not_found")
+    path = (config.STORAGE_FINAL_EXPORTS_DIR / filename).resolve()
+    final_exports_dir = config.STORAGE_FINAL_EXPORTS_DIR.resolve()
+    if path.parent != final_exports_dir or not path.exists() or path.suffix.lower() != ".mp4":
+        raise HTTPException(status_code=404, detail="final_export_not_found")
+    return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+
 def _load_rendered_clips() -> list[dict[str, Any]]:
     reviews = _load_reviews()
     plan_items = _items_by_output_filename(_load_latest_items("approved_clips_plan_*.json"))
@@ -264,6 +358,15 @@ def _find_clip_by_id(clip_id: str) -> dict[str, Any] | None:
         return None
     for clip in _load_rendered_clips():
         if clip["clip_id"] == clip_id:
+            return clip
+    return None
+
+
+def _find_final_clip_by_id(final_clip_id: str) -> dict[str, Any] | None:
+    if not _is_safe_clip_id(final_clip_id):
+        return None
+    for clip in load_final_clips():
+        if clip["final_clip_id"] == final_clip_id:
             return clip
     return None
 

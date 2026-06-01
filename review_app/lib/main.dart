@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'screens/final_clips_screen.dart';
 import 'screens/review_clip_screen.dart';
 
 void main() {
@@ -40,7 +41,44 @@ class DarkFlowReviewApp extends StatelessWidget {
           bodySmall: TextStyle(color: Color(0xFF8C93A6)),
         ),
       ),
-      home: const ReviewClipScreen(),
+      home: const _ReviewTabs(),
+    );
+  }
+}
+
+class _ReviewTabs extends StatefulWidget {
+  const _ReviewTabs();
+
+  @override
+  State<_ReviewTabs> createState() => _ReviewTabsState();
+}
+
+class _ReviewTabsState extends State<_ReviewTabs> {
+  int _index = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: _index,
+        children: const [ReviewClipScreen(), FinalClipsScreen()],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _index,
+        onDestinationSelected: (value) => setState(() => _index = value),
+        backgroundColor: const Color(0xFF0F1018),
+        indicatorColor: const Color(0xFF00C8F0).withValues(alpha: 0.16),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.rate_review_rounded),
+            label: 'Review Clips',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.rocket_launch_rounded),
+            label: 'Final Clips',
+          ),
+        ],
+      ),
     );
   }
 }

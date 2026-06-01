@@ -88,8 +88,14 @@ STORAGE_TRANSCRIPTS_DIR = Path(__file__).resolve().parent / "storage" / "transcr
 STORAGE_CLIPS_DIR = Path(__file__).resolve().parent / "storage" / "clips"
 STORAGE_EXPORTS_DIR = Path(__file__).resolve().parent / "storage" / "exports"
 STORAGE_VERTICAL_EXPORTS_DIR = Path(__file__).resolve().parent / "storage" / "vertical_exports"
+STORAGE_FINAL_EXPORTS_DIR = Path(__file__).resolve().parent / "storage" / "final_exports"
+STORAGE_SUBTITLED_EXPORTS_DIR = Path(__file__).resolve().parent / "storage" / "subtitled_exports"
+STORAGE_SUBTITLES_DIR = Path(__file__).resolve().parent / "storage" / "subtitles"
+STORAGE_CLIP_TRANSCRIPTS_DIR = Path(__file__).resolve().parent / "storage" / "clip_transcripts"
 STORAGE_VIDEOS_DIR = Path(__file__).resolve().parent / "storage" / "videos"
 STORAGE_REVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "reviews"
+STORAGE_FINAL_REVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "final_reviews"
+STORAGE_POSTING_PACKAGE_DIR = Path(__file__).resolve().parent / "storage" / "posting_package"
 STORAGE_REFERENCE_DIR = Path(__file__).resolve().parent / "storage" / "reference"
 
 DEFAULT_BR_FEEDS = [

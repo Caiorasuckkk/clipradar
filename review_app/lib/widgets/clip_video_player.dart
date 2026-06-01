@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 class ClipVideoPlayer extends StatefulWidget {
-  const ClipVideoPlayer({super.key, required this.url});
+  const ClipVideoPlayer({
+    super.key,
+    required this.url,
+    this.aspectRatio = 16 / 9,
+  });
 
   final String url;
+  final double aspectRatio;
 
   @override
   State<ClipVideoPlayer> createState() => _ClipVideoPlayerState();
@@ -73,7 +78,7 @@ class _ClipVideoPlayerState extends State<ClipVideoPlayer> {
       ),
       clipBehavior: Clip.antiAlias,
       child: AspectRatio(
-        aspectRatio: 16 / 9,
+        aspectRatio: widget.aspectRatio,
         child: Stack(
           fit: StackFit.expand,
           children: [
