@@ -489,6 +489,39 @@ Use the batch status and retry tools to operate local review batches without gue
 
 `batch_status` summarizes candidate queue health, preview availability, review counts, rendered exports, final review counts, the latest posting package, recent reports, and tracked failed downloads. Candidate preview downloads now retry with simple backoff, can clean `.part`/`.ytdl` files for selected videos, and write failures to `backend/app/storage/reports/failed_candidate_downloads.json`. `export_ready_to_post_package --package-name latest` writes a stable `posting_package/latest` folder, while `--clean-old` removes old package folders safely inside `backend/app/storage/posting_package`.
 
+## ClipRadar 0.5.33 - Local Operations Dashboard + Job Runner API
+
+The Android review app now includes an `Operations` tab for running allowed local jobs through the backend API. The Flutter app does not execute FFmpeg, yt-dlp, shell commands, or arbitrary commands directly; it only calls allowlisted backend endpoints. Keep the backend running until long jobs finish.
+
+Start the backend:
+
+```powershell
+cd backend
+.\.ven\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Run the app on Android:
+
+```powershell
+cd review_app
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb reverse tcp:8000 tcp:8000
+flutter run -d 4eb16e24 --dart-define=API_BASE_URL=http://127.0.0.1:8000
+```
+
+Operations endpoints:
+
+```text
+GET  /ops/status
+GET  /ops/jobs
+POST /ops/jobs/run
+GET  /ops/jobs/runs
+GET  /ops/jobs/runs/{run_id}
+GET  /ops/jobs/runs/{run_id}/logs
+```
+
+The job runner stores execution metadata and logs in `backend/app/storage/job_runs`. Jobs are started with `job_key` plus structured `params`; unknown jobs or parameters are rejected.
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

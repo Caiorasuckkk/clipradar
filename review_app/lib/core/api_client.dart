@@ -6,6 +6,8 @@ import '../models/review_clip.dart';
 import '../models/review_summary.dart';
 import '../models/final_clip.dart';
 import '../models/final_summary.dart';
+import '../models/job_run.dart';
+import '../models/ops_status.dart';
 import '../models/candidate_clip.dart';
 import '../models/candidate_summary.dart';
 import 'app_config.dart';
@@ -169,6 +171,62 @@ class ApiClient {
       }),
     );
     _throwIfBad(response);
+  }
+
+  Future<OpsStatus> fetchOpsStatus() async {
+    final response = await _client.get(_uri('/ops/status'));
+    _throwIfBad(response);
+    return OpsStatus.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> fetchOpsJobs() async {
+    final response = await _client.get(_uri('/ops/jobs'));
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return (payload['jobs'] as List<dynamic>? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+  }
+
+  Future<JobRun> startOpsJob({
+    required String jobKey,
+    Map<String, dynamic> params = const {},
+  }) async {
+    final response = await _client.post(
+      _uri('/ops/jobs/run'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'job_key': jobKey, 'params': params}),
+    );
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return fetchOpsJobRun(payload['run_id'].toString());
+  }
+
+  Future<JobRun> fetchOpsJobRun(String runId) async {
+    final response = await _client.get(_uri('/ops/jobs/runs/$runId'));
+    _throwIfBad(response);
+    return JobRun.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<JobRun> fetchLatestOpsRun() async {
+    final response = await _client.get(_uri('/ops/jobs/runs', {'limit': '1'}));
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final runs = payload['runs'] as List<dynamic>? ?? [];
+    if (runs.isEmpty) {
+      return const JobRun(
+        runId: '',
+        jobKey: '',
+        status: 'none',
+        stdoutTail: '',
+        stderrTail: '',
+        exitCode: null,
+        elapsedSeconds: null,
+      );
+    }
+    return JobRun.fromJson(runs.first as Map<String, dynamic>);
   }
 
   void _throwIfBad(http.Response response) {

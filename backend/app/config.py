@@ -99,6 +99,7 @@ STORAGE_POSTING_PACKAGE_DIR = Path(__file__).resolve().parent / "storage" / "pos
 STORAGE_CANDIDATE_QUEUE_DIR = Path(__file__).resolve().parent / "storage" / "candidate_queue"
 STORAGE_CANDIDATE_PREVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "candidate_previews"
 STORAGE_CANDIDATE_REVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "candidate_reviews"
+STORAGE_JOB_RUNS_DIR = Path(__file__).resolve().parent / "storage" / "job_runs"
 STORAGE_REFERENCE_DIR = Path(__file__).resolve().parent / "storage" / "reference"
 
 DEFAULT_BR_FEEDS = [

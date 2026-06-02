@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.ops_api import router as ops_router
 from app.api.review_api import router as review_router
 
 
@@ -25,6 +26,7 @@ app.add_middleware(
 )
 
 app.include_router(review_router)
+app.include_router(ops_router)
 
 
 @app.get("/")
