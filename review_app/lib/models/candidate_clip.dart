@@ -13,6 +13,7 @@ class CandidateClip {
     required this.outputPreviewFilename,
     required this.previewExists,
     required this.previewMissing,
+    required this.previewInvalid,
     required this.previewUrl,
     required this.alreadyReviewed,
     required this.currentReview,
@@ -31,6 +32,7 @@ class CandidateClip {
   final String outputPreviewFilename;
   final bool previewExists;
   final bool previewMissing;
+  final bool previewInvalid;
   final String previewUrl;
   final bool alreadyReviewed;
   final CandidateReview? currentReview;
@@ -51,6 +53,7 @@ class CandidateClip {
       outputPreviewFilename: _string(json['output_preview_filename']),
       previewExists: json['preview_exists'] == true,
       previewMissing: json['preview_missing'] == true,
+      previewInvalid: json['preview_invalid'] == true,
       previewUrl: _string(json['preview_url']),
       alreadyReviewed: json['already_reviewed'] == true,
       currentReview: json['current_candidate_review'] is Map<String, dynamic>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -81,6 +82,23 @@ JOB_DEFINITIONS: dict[str, JobDefinition] = {
         (),
         True,
         "discovery",
+    ),
+    "find_videos_flow": JobDefinition(
+        "find_videos_flow",
+        "Encontrar vídeos",
+        "Busca vídeos, processa os melhores, gera previews e prepara Candidate Clips.",
+        "app.jobs.pipeline_find_candidates",
+        (
+            _p("max_videos", "--max-videos", "int"),
+            _p("max_previews", "--max-previews", "int"),
+            _p("include_diagnostics", "--include-diagnostics", "bool"),
+            _p("download_missing", "--download-missing", "bool"),
+            _p("overwrite", "--overwrite", "bool"),
+            _p("dry_run", "--dry-run", "bool"),
+            _p("continue_on_error", "--continue-on-error", "bool"),
+        ),
+        True,
+        "workflow",
     ),
     "review_selected_videos": JobDefinition(
         "review_selected_videos",
@@ -260,11 +278,11 @@ class LocalJobRunnerService:
 
     def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         paths = sorted(self.runs_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-        runs = [self._load_run(path.stem) for path in paths[: max(1, min(limit, 100))]]
+        runs = [self._normalize_stale_run(self._load_run(path.stem)) for path in paths[: max(1, min(limit, 100))]]
         return [run for run in runs if run]
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
-        return self._load_run(run_id)
+        return self._normalize_stale_run(self._load_run(run_id))
 
     def get_logs(self, run_id: str) -> dict[str, Any] | None:
         run = self._load_run(run_id)
@@ -301,9 +319,11 @@ class LocalJobRunnerService:
             with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
                 "w", encoding="utf-8", errors="replace"
             ) as stderr_file:
+                env = dict(**os.environ, PYTHONUNBUFFERED="1")
                 completed = subprocess.run(
                     command,
                     cwd=str(config.BACKEND_DIR),
+                    env=env,
                     stdout=stdout_file,
                     stderr=stderr_file,
                     text=True,
@@ -382,6 +402,30 @@ class LocalJobRunnerService:
         path = self._run_path(str(run["run_id"]))
         with path.open("w", encoding="utf-8") as file:
             json.dump(run, file, ensure_ascii=False, indent=2)
+
+    def _normalize_stale_run(self, run: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not run or run.get("status") not in {"queued", "running"}:
+            return run
+        started_at = run.get("started_at")
+        if not started_at:
+            return run
+        try:
+            started = datetime.fromisoformat(str(started_at))
+        except ValueError:
+            return run
+        if (datetime.utcnow() - started).total_seconds() < 3 * 60 * 60:
+            return run
+        run.update(
+            {
+                "status": "failed",
+                "finished_at": datetime.utcnow().isoformat(),
+                "elapsed_seconds": None,
+                "exit_code": -1,
+                "stderr_tail": "stale_run_marked_failed_after_runner_interruption",
+            }
+        )
+        self._write_run(run)
+        return run
 
 
 def _coerce_param(name: str, value: Any, param_type: ParamType) -> Any:

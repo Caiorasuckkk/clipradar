@@ -453,6 +453,28 @@ Recommended flow:
 
 `GET /candidate/clips?status=pending` and `GET /candidate/clips/next` now skip missing previews. `GET /candidate/clips?status=pending&include_missing_previews=true` includes them for inspection. `GET /candidate/summary` reports `preview_ready` and `missing_preview`.
 
+### ClipRadar 0.5.34.1 - Android-safe Candidate Preview MP4
+
+Candidate previews are now transcoded as Android-safe MP4 files: h264 video, `yuv420p`, AAC audio, and `+faststart`. The API marks `preview_exists=true` only when the local `.mp4` passes ffprobe validation, so invalid files are hidden from the Android player.
+
+Validate previews:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.validate_candidate_previews --bad-only
+```
+
+Delete invalid previews:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.validate_candidate_previews --bad-only --delete-bad
+```
+
+Re-render missing or invalid previews:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.render_candidate_previews --only-missing --download-missing --overwrite --max-missing 5
+```
+
 Candidate reviews are saved in `backend/app/storage/candidate_reviews/candidate_clip_reviews.json` through the local API:
 
 ```text
@@ -521,6 +543,19 @@ GET  /ops/jobs/runs/{run_id}/logs
 ```
 
 The job runner stores execution metadata and logs in `backend/app/storage/job_runs`. Jobs are started with `job_key` plus structured `params`; unknown jobs or parameters are rejected.
+
+## ClipRadar 0.5.34 - One-Tap Find Videos Flow
+
+The Operations tab now has a primary `Encontrar vídeos` flow. It runs discovery, selected-video review, queue processing, candidate queue export, and candidate preview rendering from one app button. When the job finishes, use `Avaliar candidatos agora` to jump into `Candidate Clips` and review the ready previews. The advanced technical buttons remain available below the quick flow.
+
+Backend smoke tests:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.pipeline_find_candidates --dry-run --max-videos 1 --max-previews 2
+.\.ven\Scripts\python.exe -m app.jobs.pipeline_find_candidates --max-videos 1 --max-previews 2 --download-missing --overwrite
+```
+
+The Flutter app still only calls the backend API. It does not run local commands directly, does not publish anything, and uses the allowlisted `find_videos_flow` job through `/ops/jobs/run`.
 
 ## Reference Clip Benchmark
 

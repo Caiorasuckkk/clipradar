@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app import config
+from app.services.candidate_preview_validation_service import validate_candidate_preview
 
 
 QUEUE_PATH = config.STORAGE_CANDIDATE_QUEUE_DIR / "candidate_review_queue.json"
@@ -38,12 +39,16 @@ def load_candidate_queue() -> list[dict[str, Any]]:
 def preview_status_for_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     filename = str(candidate.get("output_preview_filename") or "")
     path = config.STORAGE_CANDIDATE_PREVIEWS_DIR / filename if filename else None
-    exists = bool(path and path.exists() and path.is_file() and path.suffix.lower() == ".mp4")
+    validation = validate_candidate_preview(path) if path else None
+    exists = bool(validation and validation.valid)
+    invalid = bool(validation and path and path.exists() and not validation.valid)
     return {
         "preview_exists": exists,
         "preview_path": str(path) if path else "",
         "preview_url": f"/candidate_previews/{filename}" if filename else "",
         "preview_missing": not exists,
+        "preview_invalid": invalid,
+        "preview_validation_error": validation.error_message if validation else "",
     }
 
 

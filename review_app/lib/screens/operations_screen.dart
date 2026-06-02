@@ -7,7 +7,9 @@ import '../models/job_run.dart';
 import '../models/ops_status.dart';
 
 class OperationsScreen extends StatefulWidget {
-  const OperationsScreen({super.key});
+  const OperationsScreen({super.key, required this.onOpenCandidates});
+
+  final VoidCallback onOpenCandidates;
 
   @override
   State<OperationsScreen> createState() => _OperationsScreenState();
@@ -131,8 +133,38 @@ class _OperationsScreenState extends State<OperationsScreen> {
               const SizedBox(height: 12),
               _StatusGrid(status: _status),
               const SizedBox(height: 14),
+              _FindVideosCard(
+                disabled: _starting || run?.isRunning == true,
+                starting:
+                    _runningJobKey == _findVideosAction.jobKey && _starting,
+                onStart: () => _startJob(_findVideosAction),
+              ),
+              if (_canReviewCandidates(run)) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 52,
+                  child: FilledButton.icon(
+                    onPressed: widget.onOpenCandidates,
+                    icon: const Icon(Icons.play_circle_fill_rounded),
+                    label: const Text('Avaliar candidatos agora'),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
               const _BackendNotice(),
               const SizedBox(height: 14),
+              const _SectionTitle('Fluxo rápido'),
+              _ActionGroup(
+                title: '',
+                actions: _quickActions,
+                starting: _starting,
+                runningJobKey: _runningJobKey,
+                hasRunningJob: run?.isRunning == true,
+                onRun: _startJob,
+              ),
+              const SizedBox(height: 14),
+              const _SectionTitle('Avançado'),
+              const SizedBox(height: 8),
               for (final group in _actionGroups) ...[
                 _ActionGroup(
                   title: group.title,
@@ -150,6 +182,14 @@ class _OperationsScreenState extends State<OperationsScreen> {
         ),
       ),
     );
+  }
+
+  bool _canReviewCandidates(JobRun? run) {
+    final status = _status;
+    return run?.status == 'success' &&
+        status != null &&
+        status.previewReady > 0 &&
+        status.candidateReviewsPending > 0;
   }
 }
 
@@ -307,6 +347,80 @@ class _BackendNotice extends StatelessWidget {
   }
 }
 
+class _FindVideosCard extends StatelessWidget {
+  const _FindVideosCard({
+    required this.disabled,
+    required this.starting,
+    required this.onStart,
+  });
+
+  final bool disabled;
+  final bool starting;
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101827),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF1E4058)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.manage_search_rounded, color: Color(0xFF00C8F0)),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Encontrar vídeos',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Busca novos vídeos e prepara candidatos para você avaliar.',
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            height: 54,
+            child: FilledButton.icon(
+              onPressed: disabled ? null : onStart,
+              icon: starting
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.search_rounded),
+              label: Text(starting ? 'Começando...' : 'Começar busca'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+    );
+  }
+}
+
 class _ActionGroup extends StatelessWidget {
   const _ActionGroup({
     required this.title,
@@ -394,6 +508,16 @@ class _RunCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
+          if (current.jobKey == 'find_videos_flow' && current.isRunning) ...[
+            Text(
+              _workflowStage(current.stdoutTail),
+              style: const TextStyle(
+                color: Color(0xFF00C8F0),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           Text('run_id: ${current.runId}'),
           Text(
             'exit: ${current.exitCode ?? '-'} · ${current.elapsedSeconds ?? '-'}s',
@@ -493,6 +617,47 @@ String _packageName(String path) {
   final normalized = path.replaceAll('\\', '/');
   return normalized.split('/').last;
 }
+
+String _workflowStage(String stdout) {
+  if (stdout.contains('Step 5/5')) return 'Renderizando previews...';
+  if (stdout.contains('Step 4/5')) return 'Gerando candidatos...';
+  if (stdout.contains('Step 3/5')) return 'Processando vídeos...';
+  if (stdout.contains('Step 2/5')) return 'Selecionando melhores...';
+  if (stdout.contains('Step 1/5')) return 'Buscando vídeos...';
+  return 'Preparando busca...';
+}
+
+const _findVideosAction = _OpAction(
+  label: 'Encontrar vídeos',
+  jobKey: 'find_videos_flow',
+  icon: Icons.manage_search_rounded,
+  params: {
+    'max_videos': 3,
+    'max_previews': 10,
+    'include_diagnostics': false,
+    'download_missing': true,
+    'overwrite': true,
+  },
+);
+
+const _quickActions = [
+  _OpAction(
+    label: 'Gerar vídeos finais',
+    jobKey: 'pipeline_ready_to_post',
+    icon: Icons.rocket_launch_rounded,
+    params: {
+      'download_missing': true,
+      'overwrite': true,
+      'package_name': 'latest',
+    },
+  ),
+  _OpAction(
+    label: 'Package latest',
+    jobKey: 'export_ready_to_post_package',
+    icon: Icons.inventory_2_rounded,
+    params: {'package_name': 'latest'},
+  ),
+];
 
 const _actionGroups = [
   _OpGroup(

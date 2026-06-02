@@ -63,11 +63,11 @@ class _ReviewTabsState extends State<_ReviewTabs> {
     return Scaffold(
       body: IndexedStack(
         index: _index,
-        children: const [
-          ReviewClipScreen(),
-          FinalClipsScreen(),
-          CandidateClipsScreen(),
-          OperationsScreen(),
+        children: [
+          const ReviewClipScreen(),
+          const FinalClipsScreen(),
+          const CandidateClipsScreen(),
+          OperationsScreen(onOpenCandidates: () => setState(() => _index = 2)),
         ],
       ),
       bottomNavigationBar: NavigationBar(

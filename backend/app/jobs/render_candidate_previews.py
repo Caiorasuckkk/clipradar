@@ -13,6 +13,7 @@ from typing import Any
 
 from app import config
 from app.services.candidate_review_service import QUEUE_PATH
+from app.services.candidate_preview_validation_service import validate_candidate_preview
 
 
 SOURCE_EXTENSIONS = (".mp4", ".mkv", ".webm", ".mov")
@@ -32,6 +33,7 @@ def main() -> None:
     parser.add_argument("--max-missing", type=int)
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--clean-partials", action="store_true")
+    parser.add_argument("--rerender-invalid", action="store_true")
     args = parser.parse_args()
 
     items = _load_queue_items()
@@ -47,7 +49,14 @@ def main() -> None:
     if args.candidate_id:
         items = [item for item in items if str(item.get("candidate_id") or "") == args.candidate_id]
     if args.only_missing:
-        items = [item for item in items if not _output_path_for_item(item).exists()]
+        items = [item for item in items if not validate_candidate_preview(_output_path_for_item(item)).valid]
+    if args.rerender_invalid:
+        items = [
+            item
+            for item in items
+            if _output_path_for_item(item).exists()
+            and not validate_candidate_preview(_output_path_for_item(item)).valid
+        ]
     if args.max_missing is not None:
         items = items[: max(0, args.max_missing)]
     if args.limit is not None:
@@ -95,6 +104,7 @@ def main() -> None:
     print(f"Skipped: {sum(1 for item in results if item['status'] == 'skipped')}")
     print(f"Missing source: {sum(1 for item in results if item['status'] == 'missing_source')}")
     print(f"Errors: {sum(1 for item in results if item['status'] == 'error')}")
+    print(f"Invalid: {sum(1 for item in results if item['status'] == 'invalid_preview')}")
     if interrupted:
         print(f"Interrupted: true")
     print(f"Output dir: {config.STORAGE_CANDIDATE_PREVIEWS_DIR}")
@@ -176,8 +186,22 @@ def _render_item(
         result["error_message"] = str(exc)
         return result
     if completed.returncode != 0:
+        try:
+            output_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         result["status"] = "error"
         result["error_message"] = (completed.stderr or completed.stdout or "").strip()[:1000]
+        return result
+    validation = validate_candidate_preview(output_path)
+    result["preview_validation"] = validation.to_dict()
+    if not validation.valid:
+        try:
+            output_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        result["status"] = "invalid_preview"
+        result["error_message"] = validation.error_message
         return result
     result["status"] = "rendered"
     _clear_failed_download(video_id=video_id, candidate_id=candidate_id)
@@ -340,6 +364,8 @@ def _ffmpeg_command(source_path: Path, output_path: Path, start: float, duration
         "veryfast",
         "-crf",
         "20",
+        "-pix_fmt",
+        "yuv420p",
         "-c:a",
         "aac",
         "-b:a",

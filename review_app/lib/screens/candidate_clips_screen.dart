@@ -174,15 +174,16 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
       return Center(
         child: Text(
           _filter == CandidateFilter.pending
-              ? 'Sem candidatos pendentes'
+              ? 'Nenhum candidato pronto. Volte para Operations e renderize previews.'
               : 'Sem candidatos',
+          textAlign: TextAlign.center,
         ),
       );
     }
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
-        if (clip.previewMissing || !clip.previewExists)
+        if (clip.previewInvalid || clip.previewMissing || !clip.previewExists)
           const _MissingPreviewCard()
         else
           ClipVideoPlayer(
@@ -312,7 +313,9 @@ class _MissingPreviewCard extends StatelessWidget {
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           ),
           SizedBox(height: 6),
-          Text('Este candidato ainda não tem arquivo .mp4 local.'),
+          Text(
+            'Preview inválido ou ainda não renderizado. Gere o preview novamente em Operations.',
+          ),
         ],
       ),
     );
