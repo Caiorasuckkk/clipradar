@@ -39,7 +39,7 @@ def load_candidate_queue() -> list[dict[str, Any]]:
 def preview_status_for_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     filename = str(candidate.get("output_preview_filename") or "")
     path = config.STORAGE_CANDIDATE_PREVIEWS_DIR / filename if filename else None
-    validation = validate_candidate_preview(path) if path else None
+    validation = validate_candidate_preview(path, deep=True) if path else None
     exists = bool(validation and validation.valid)
     invalid = bool(validation and path and path.exists() and not validation.valid)
     return {

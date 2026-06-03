@@ -3,7 +3,13 @@ import 'package:flutter/material.dart';
 import '../core/api_client.dart';
 import '../models/final_clip.dart';
 import '../models/final_summary.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_text_styles.dart';
 import '../widgets/clip_video_player.dart';
+import '../widgets/df_empty_state.dart';
+import '../widgets/df_error_state.dart';
+import '../widgets/df_loading_state.dart';
+import '../widgets/df_status_chip.dart';
 import '../widgets/rating_stars.dart';
 
 enum FinalFilter { pending, reviewed, ready, all }
@@ -178,28 +184,22 @@ class _FinalClipsScreenState extends State<FinalClipsScreen> {
 
   Widget _body() {
     if (_loading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Color(0xFF00C8F0)),
-      );
+      return const DfLoadingState(message: 'Carregando finais...');
     }
     if (_error != null && _clips.isEmpty) {
-      return _CenteredMessage(
-        icon: Icons.wifi_off_rounded,
-        title: 'Backend indisponivel',
-        detail: _error!,
-        onRetry: _load,
-      );
+      return DfErrorState(message: _error!, onRetry: _load);
     }
     if (_filter != FinalFilter.pending && _clips.isNotEmpty && !_showDetail) {
       return _FinalClipList(clips: _clips, onClipTap: _selectClip);
     }
     final clip = _clip;
     if (clip == null) {
-      return _CenteredMessage(
+      return DfEmptyState(
         icon: Icons.done_all_rounded,
         title: 'Sem finais pendentes',
-        detail: 'Os clipes finais desta fila ja foram revisados.',
-        onRetry: _load,
+        message: 'Os clipes finais desta fila já foram revisados.',
+        onAction: _load,
+        actionLabel: 'Atualizar',
       );
     }
     return RefreshIndicator(
@@ -266,13 +266,10 @@ class _FinalHeader extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.rocket_launch_rounded, color: Color(0xFF00C8F0)),
+              const Icon(Icons.rocket_launch_rounded, color: AppColors.cyan),
               const SizedBox(width: 10),
               const Expanded(
-                child: Text(
-                  'Final Clips',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-                ),
+                child: Text('Finais', style: AppTextStyles.section),
               ),
               IconButton(
                 onPressed: onRefresh,
@@ -435,15 +432,7 @@ class _FinalInfoCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'FINAL CLIP',
-            style: TextStyle(
-              color: Color(0xFF6B7280),
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.8,
-            ),
-          ),
+          const Text('FINAL CLIP', style: AppTextStyles.muted),
           const SizedBox(height: 7),
           Text(
             clip.videoTitle.isEmpty ? clip.finalFilename : clip.videoTitle,
@@ -462,6 +451,20 @@ class _FinalInfoCard extends StatelessWidget {
             value: 'rating ${clip.rating ?? '-'} / ${clip.reason}',
           ),
           _InfoRow(label: 'post', value: clip.postStatus),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              DfStatusChip(label: clip.postStatus, status: clip.postStatus),
+              DfStatusChip(label: clip.reviewReason),
+              if (clip.currentFinalReview != null)
+                DfStatusChip(
+                  label: clip.currentFinalReview!.status,
+                  status: clip.currentFinalReview!.status,
+                ),
+            ],
+          ),
         ],
       ),
     );
@@ -672,48 +675,6 @@ class _FinalBottomActions extends StatelessWidget {
                 )
               : const Icon(Icons.skip_next_rounded),
           label: Text(saving ? 'Salvando...' : 'Salvar e proximo'),
-        ),
-      ),
-    );
-  }
-}
-
-class _CenteredMessage extends StatelessWidget {
-  const _CenteredMessage({
-    required this.icon,
-    required this.title,
-    required this.detail,
-    required this.onRetry,
-  });
-
-  final IconData icon;
-  final String title;
-  final String detail;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: const Color(0xFF00C8F0), size: 48),
-            const SizedBox(height: 14),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              detail,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFF8C93A6)),
-            ),
-            const SizedBox(height: 18),
-            OutlinedButton(onPressed: onRetry, child: const Text('Recarregar')),
-          ],
         ),
       ),
     );

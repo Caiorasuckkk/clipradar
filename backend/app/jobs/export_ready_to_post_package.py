@@ -143,6 +143,7 @@ def _package_item(
         "package_index": package_index,
         "final_clip_id": clip.get("final_clip_id"),
         "clip_id": clip.get("clip_id"),
+        "candidate_id": clip.get("candidate_id"),
         "video_id": clip.get("video_id"),
         "video_title": video_title,
         "original_youtube_url": clip.get("original_youtube_url") or "",

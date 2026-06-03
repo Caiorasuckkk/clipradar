@@ -37,6 +37,31 @@ class CandidateClip {
   final bool alreadyReviewed;
   final CandidateReview? currentReview;
 
+  CandidateClip copyWith({
+    bool? alreadyReviewed,
+    CandidateReview? currentReview,
+  }) {
+    return CandidateClip(
+      candidateId: candidateId,
+      videoId: videoId,
+      videoTitle: videoTitle,
+      sourceCollection: sourceCollection,
+      rank: rank,
+      startSeconds: startSeconds,
+      endSeconds: endSeconds,
+      durationSeconds: durationSeconds,
+      reason: reason,
+      youtubeUrl: youtubeUrl,
+      outputPreviewFilename: outputPreviewFilename,
+      previewExists: previewExists,
+      previewMissing: previewMissing,
+      previewInvalid: previewInvalid,
+      previewUrl: previewUrl,
+      alreadyReviewed: alreadyReviewed ?? this.alreadyReviewed,
+      currentReview: currentReview ?? this.currentReview,
+    );
+  }
+
   factory CandidateClip.fromJson(Map<String, dynamic> json) {
     return CandidateClip(
       candidateId: _string(json['candidate_id']),

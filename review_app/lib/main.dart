@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
-import 'screens/final_clips_screen.dart';
 import 'screens/candidate_clips_screen.dart';
-import 'screens/operations_screen.dart';
-import 'screens/review_clip_screen.dart';
+import 'screens/home_screen.dart';
+import 'screens/more_screen.dart';
+import 'screens/posts_screen.dart';
+import 'theme/app_colors.dart';
+import 'widgets/df_bottom_nav.dart';
 
 void main() {
   runApp(const DarkFlowReviewApp());
@@ -14,33 +16,44 @@ class DarkFlowReviewApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const background = Color(0xFF08090E);
-    const surface = Color(0xFF0F1018);
-    const neon = Color(0xFF00C8F0);
-
     return MaterialApp(
       title: 'DarkFlow Review',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: background,
+        scaffoldBackgroundColor: AppColors.background,
         colorScheme: const ColorScheme.dark(
-          primary: neon,
-          surface: surface,
-          error: Color(0xFFEF4444),
+          primary: AppColors.cyan,
+          surface: AppColors.surface,
+          error: AppColors.danger,
         ),
         textTheme: const TextTheme(
           titleLarge: TextStyle(
             fontWeight: FontWeight.w800,
-            color: Color(0xFFE8EAF0),
+            color: AppColors.text,
           ),
           titleMedium: TextStyle(
             fontWeight: FontWeight.w700,
-            color: Color(0xFFE8EAF0),
+            color: AppColors.text,
           ),
           bodyMedium: TextStyle(color: Color(0xFFC0C4D6)),
-          bodySmall: TextStyle(color: Color(0xFF8C93A6)),
+          bodySmall: TextStyle(color: AppColors.muted),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            side: const BorderSide(color: AppColors.border),
+          ),
         ),
       ),
       home: const _ReviewTabs(),
@@ -64,35 +77,21 @@ class _ReviewTabsState extends State<_ReviewTabs> {
       body: IndexedStack(
         index: _index,
         children: [
-          const ReviewClipScreen(),
-          const FinalClipsScreen(),
-          const CandidateClipsScreen(),
-          OperationsScreen(onOpenCandidates: () => setState(() => _index = 2)),
+          HomeScreen(
+            onOpenCandidates: () => setState(() => _index = 1),
+            onOpenPosts: () => setState(() => _index = 2),
+          ),
+          CandidateClipsScreen(
+            onOpenHome: () => setState(() => _index = 0),
+            onOpenPosts: () => setState(() => _index = 2),
+          ),
+          const PostsScreen(),
+          MoreScreen(onOpenCandidates: () => setState(() => _index = 1)),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
+      bottomNavigationBar: DFBottomNav(
         selectedIndex: _index,
         onDestinationSelected: (value) => setState(() => _index = value),
-        backgroundColor: const Color(0xFF0F1018),
-        indicatorColor: const Color(0xFF00C8F0).withValues(alpha: 0.16),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.rate_review_rounded),
-            label: 'Review Clips',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.rocket_launch_rounded),
-            label: 'Final Clips',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.preview_rounded),
-            label: 'Candidates',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.tune_rounded),
-            label: 'Operations',
-          ),
-        ],
       ),
     );
   }

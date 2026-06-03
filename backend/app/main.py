@@ -4,7 +4,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.ops_api import router as ops_router
+from app.api.posts_api import router as posts_router
 from app.api.review_api import router as review_router
+from app.api.generation_api import router as generation_router
 
 
 app = FastAPI(title="ClipRadar Local API", version="0.5.21")
@@ -27,6 +29,8 @@ app.add_middleware(
 
 app.include_router(review_router)
 app.include_router(ops_router)
+app.include_router(posts_router)
+app.include_router(generation_router)
 
 
 @app.get("/")

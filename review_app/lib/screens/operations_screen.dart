@@ -5,6 +5,13 @@ import 'package:flutter/material.dart';
 import '../core/api_client.dart';
 import '../models/job_run.dart';
 import '../models/ops_status.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_text_styles.dart';
+import '../widgets/df_card.dart';
+import '../widgets/df_metric_card.dart';
+import '../widgets/df_section_header.dart';
+import '../widgets/df_status_chip.dart';
+import 'review_clip_screen.dart';
 
 class OperationsScreen extends StatefulWidget {
   const OperationsScreen({super.key, required this.onOpenCandidates});
@@ -125,20 +132,30 @@ class _OperationsScreenState extends State<OperationsScreen> {
           child: ListView(
             padding: const EdgeInsets.all(14),
             children: [
-              _Header(onRefresh: _loadStatus, loading: _loadingStatus),
+              _Header(
+                status: _status,
+                onRefresh: _loadStatus,
+                loading: _loadingStatus,
+              ),
               if (_error != null) ...[
                 const SizedBox(height: 10),
                 _ErrorCard(message: _error!),
               ],
               const SizedBox(height: 12),
-              _StatusGrid(status: _status),
-              const SizedBox(height: 14),
-              _FindVideosCard(
-                disabled: _starting || run?.isRunning == true,
-                starting:
-                    _runningJobKey == _findVideosAction.jobKey && _starting,
-                onStart: () => _startJob(_findVideosAction),
+              const DfSectionHeader(
+                title: 'Fluxo rápido',
+                subtitle: 'Ações principais para operar o lote local.',
               ),
+              _QuickFlow(
+                disabled: _starting || run?.isRunning == true,
+                starting: _starting,
+                runningJobKey: _runningJobKey,
+                onRun: _startJob,
+                onOpenCandidates: widget.onOpenCandidates,
+              ),
+              const SizedBox(height: 14),
+              const DfSectionHeader(title: 'Status do lote'),
+              _StatusGrid(status: _status),
               if (_canReviewCandidates(run)) ...[
                 const SizedBox(height: 10),
                 SizedBox(
@@ -152,30 +169,21 @@ class _OperationsScreenState extends State<OperationsScreen> {
               ],
               const SizedBox(height: 14),
               const _BackendNotice(),
+              const SizedBox(height: 10),
+              _LegacyReviewButton(
+                onOpen: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ReviewClipScreen()),
+                ),
+              ),
               const SizedBox(height: 14),
-              const _SectionTitle('Fluxo rápido'),
-              _ActionGroup(
-                title: '',
-                actions: _quickActions,
+              _AdvancedActions(
+                groups: _actionGroups,
                 starting: _starting,
                 runningJobKey: _runningJobKey,
                 hasRunningJob: run?.isRunning == true,
                 onRun: _startJob,
               ),
               const SizedBox(height: 14),
-              const _SectionTitle('Avançado'),
-              const SizedBox(height: 8),
-              for (final group in _actionGroups) ...[
-                _ActionGroup(
-                  title: group.title,
-                  actions: group.actions,
-                  starting: _starting,
-                  runningJobKey: _runningJobKey,
-                  hasRunningJob: run?.isRunning == true,
-                  onRun: _startJob,
-                ),
-                const SizedBox(height: 14),
-              ],
               _RunCard(run: run),
             ],
           ),
@@ -194,33 +202,222 @@ class _OperationsScreenState extends State<OperationsScreen> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.onRefresh, required this.loading});
+  const _Header({
+    required this.status,
+    required this.onRefresh,
+    required this.loading,
+  });
 
+  final OpsStatus? status;
   final VoidCallback onRefresh;
   final bool loading;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        const Icon(Icons.tune_rounded, color: Color(0xFF00C8F0)),
-        const SizedBox(width: 10),
-        const Expanded(
-          child: Text(
-            'Operations',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+    return DfCard(
+      color: AppColors.surfaceAlt,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.cyan.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: const Icon(Icons.bolt_rounded, color: AppColors.cyan),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('DarkFlow', style: AppTextStyles.title),
+                    SizedBox(height: 2),
+                    Text(
+                      'Pipeline local de cortes e postagem',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.muted,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: loading ? null : onRefresh,
+                icon: loading
+                    ? const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_rounded),
+              ),
+            ],
           ),
-        ),
-        IconButton(
-          onPressed: loading ? null : onRefresh,
-          icon: loading
-              ? const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.refresh_rounded),
-        ),
-      ],
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              DfStatusChip(
+                label: status == null ? 'API carregando' : 'API conectada',
+                status: status == null ? 'scheduled' : 'success',
+              ),
+              DfStatusChip(label: 'Ready ${status?.readyToPost ?? 0}'),
+              DfStatusChip(
+                label: 'Falhas ${status?.failedDownloads ?? 0}',
+                status: (status?.failedDownloads ?? 0) > 0
+                    ? 'failed'
+                    : 'success',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickFlow extends StatelessWidget {
+  const _QuickFlow({
+    required this.disabled,
+    required this.starting,
+    required this.runningJobKey,
+    required this.onRun,
+    required this.onOpenCandidates,
+  });
+
+  final bool disabled;
+  final bool starting;
+  final String? runningJobKey;
+  final ValueChanged<_OpAction> onRun;
+  final VoidCallback onOpenCandidates;
+
+  @override
+  Widget build(BuildContext context) {
+    final cards = [
+      _FlowCardData(
+        icon: Icons.manage_search_rounded,
+        title: 'Encontrar vídeos',
+        description: 'Busca vídeos e prepara candidatos para revisão.',
+        label: 'Começar',
+        action: () => onRun(_findVideosAction),
+        jobKey: _findVideosAction.jobKey,
+      ),
+      _FlowCardData(
+        icon: Icons.play_circle_fill_rounded,
+        title: 'Avaliar candidatos',
+        description: 'Revise os cortes sugeridos.',
+        label: 'Abrir',
+        action: onOpenCandidates,
+      ),
+      _FlowCardData(
+        icon: Icons.rocket_launch_rounded,
+        title: 'Gerar finais',
+        description: 'Cria vídeos finais prontos para revisão.',
+        label: 'Gerar',
+        action: () => onRun(_quickActions.first),
+        jobKey: _quickActions.first.jobKey,
+      ),
+      _FlowCardData(
+        icon: Icons.inventory_2_rounded,
+        title: 'Exportar pacote',
+        description: 'Atualiza o pacote latest para postagem.',
+        label: 'Exportar',
+        action: () => onRun(_quickActions[1]),
+        jobKey: _quickActions[1].jobKey,
+      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final twoColumns = constraints.maxWidth >= 370;
+        final width = twoColumns
+            ? (constraints.maxWidth - 10) / 2
+            : constraints.maxWidth;
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final card in cards)
+              SizedBox(
+                width: width,
+                child: _FlowActionCard(
+                  data: card,
+                  disabled: disabled && card.title != 'Avaliar candidatos',
+                  busy: starting && runningJobKey == card.jobKey,
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _FlowCardData {
+  const _FlowCardData({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.label,
+    required this.action,
+    this.jobKey,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final String label;
+  final VoidCallback action;
+  final String? jobKey;
+}
+
+class _FlowActionCard extends StatelessWidget {
+  const _FlowActionCard({
+    required this.data,
+    required this.disabled,
+    required this.busy,
+  });
+
+  final _FlowCardData data;
+  final bool disabled;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    return DfCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(data.icon, color: AppColors.cyan),
+          const SizedBox(height: 10),
+          Text(
+            data.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.cardTitle,
+          ),
+          const SizedBox(height: 5),
+          Text(
+            data.description,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.muted,
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: FilledButton(
+              onPressed: disabled || busy ? null : data.action,
+              child: Text(busy ? 'Iniciando...' : data.label),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -251,81 +448,21 @@ class _StatusGrid extends StatelessWidget {
           itemCount: items.length,
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
-            mainAxisExtent: 92,
+            mainAxisExtent: 86,
             mainAxisSpacing: 10,
             crossAxisSpacing: 10,
           ),
           itemBuilder: (context, index) {
             final item = items[index];
-            return _MetricTile(label: item.$1, value: item.$2.toString());
+            return DfMetricCard(label: item.$1, value: item.$2.toString());
           },
         ),
         const SizedBox(height: 8),
-        _MetricTile(
+        DfMetricCard(
           label: 'Último package',
           value: _packageName(status?.latestPackage ?? ''),
-          wide: true,
         ),
       ],
-    );
-  }
-}
-
-class _MetricTile extends StatelessWidget {
-  const _MetricTile({
-    required this.label,
-    required this.value,
-    this.wide = false,
-  });
-
-  final String label;
-  final String value;
-  final bool wide;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: BoxConstraints(minHeight: wide ? 78 : 92),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F1018),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF242838)),
-      ),
-      child: Center(
-        child: SizedBox(
-          width: double.infinity,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 2),
-              SizedBox(
-                height: 24,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    value.isEmpty ? '-' : value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
@@ -335,88 +472,28 @@ class _BackendNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF101827),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF1E4058)),
-      ),
+    return DfCard(
+      color: const Color(0xFF101827),
       child: const Text('Mantenha o backend aberto até o job terminar.'),
     );
   }
 }
 
-class _FindVideosCard extends StatelessWidget {
-  const _FindVideosCard({
-    required this.disabled,
-    required this.starting,
-    required this.onStart,
-  });
+class _LegacyReviewButton extends StatelessWidget {
+  const _LegacyReviewButton({required this.onOpen});
 
-  final bool disabled;
-  final bool starting;
-  final VoidCallback onStart;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF101827),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF1E4058)),
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: OutlinedButton.icon(
+        onPressed: onOpen,
+        icon: const Icon(Icons.rate_review_rounded),
+        label: const Text('Abrir Review Clips renderizados'),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.manage_search_rounded, color: Color(0xFF00C8F0)),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Encontrar vídeos',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Busca novos vídeos e prepara candidatos para você avaliar.',
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            height: 54,
-            child: FilledButton.icon(
-              onPressed: disabled ? null : onStart,
-              icon: starting
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.search_rounded),
-              label: Text(starting ? 'Começando...' : 'Começar busca'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
     );
   }
 }
@@ -464,6 +541,51 @@ class _ActionGroup extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _AdvancedActions extends StatelessWidget {
+  const _AdvancedActions({
+    required this.groups,
+    required this.starting,
+    required this.runningJobKey,
+    required this.hasRunningJob,
+    required this.onRun,
+  });
+
+  final List<_OpGroup> groups;
+  final bool starting;
+  final String? runningJobKey;
+  final bool hasRunningJob;
+  final ValueChanged<_OpAction> onRun;
+
+  @override
+  Widget build(BuildContext context) {
+    return DfCard(
+      padding: EdgeInsets.zero,
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+        childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+        title: const Text('Avançado', style: AppTextStyles.section),
+        subtitle: const Text(
+          'Jobs técnicos, feedback e manutenção',
+          style: AppTextStyles.muted,
+        ),
+        children: [
+          for (final group in groups) ...[
+            _ActionGroup(
+              title: group.title,
+              actions: group.actions,
+              starting: starting,
+              runningJobKey: runningJobKey,
+              hasRunningJob: hasRunningJob,
+              onRun: onRun,
+            ),
+            const SizedBox(height: 14),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -560,14 +682,17 @@ class _LogBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
+      constraints: const BoxConstraints(maxHeight: 180),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0xFF08090E),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Text(
-        text.isEmpty ? '$title: sem saída ainda' : '$title:\n$text',
-        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      child: SingleChildScrollView(
+        child: Text(
+          text.isEmpty ? '$title: sem saída ainda' : '$title:\n$text',
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+        ),
       ),
     );
   }
@@ -656,6 +781,11 @@ const _quickActions = [
     jobKey: 'export_ready_to_post_package',
     icon: Icons.inventory_2_rounded,
     params: {'package_name': 'latest'},
+  ),
+  _OpAction(
+    label: 'Gerar metadados',
+    jobKey: 'export_post_metadata',
+    icon: Icons.article_rounded,
   ),
 ];
 
@@ -760,6 +890,11 @@ const _actionGroups = [
         jobKey: 'export_ready_to_post_package',
         icon: Icons.inventory_2_rounded,
         params: {'package_name': 'latest'},
+      ),
+      _OpAction(
+        label: 'Metadados postagem',
+        jobKey: 'export_post_metadata',
+        icon: Icons.article_rounded,
       ),
     ],
   ),

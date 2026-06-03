@@ -96,10 +96,12 @@ STORAGE_VIDEOS_DIR = Path(__file__).resolve().parent / "storage" / "videos"
 STORAGE_REVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "reviews"
 STORAGE_FINAL_REVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "final_reviews"
 STORAGE_POSTING_PACKAGE_DIR = Path(__file__).resolve().parent / "storage" / "posting_package"
+STORAGE_POST_METADATA_DIR = Path(__file__).resolve().parent / "storage" / "post_metadata"
 STORAGE_CANDIDATE_QUEUE_DIR = Path(__file__).resolve().parent / "storage" / "candidate_queue"
 STORAGE_CANDIDATE_PREVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "candidate_previews"
 STORAGE_CANDIDATE_REVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "candidate_reviews"
 STORAGE_JOB_RUNS_DIR = Path(__file__).resolve().parent / "storage" / "job_runs"
+STORAGE_GENERATION_STATE_DIR = Path(__file__).resolve().parent / "storage" / "generation_state"
 STORAGE_REFERENCE_DIR = Path(__file__).resolve().parent / "storage" / "reference"
 
 DEFAULT_BR_FEEDS = [

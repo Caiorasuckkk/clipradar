@@ -16,6 +16,8 @@ def main() -> None:
     parser.add_argument("--delete-bad", action="store_true")
     parser.add_argument("--video-id")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--deep", action="store_true")
+    parser.add_argument("--full-decode", action="store_true")
     args = parser.parse_args()
 
     items: list[dict[str, Any]] = []
@@ -23,7 +25,7 @@ def main() -> None:
     for path in sorted(config.STORAGE_CANDIDATE_PREVIEWS_DIR.glob("*.mp4"), key=lambda item: item.name.lower()):
         if args.video_id and args.video_id not in path.name:
             continue
-        validation = validate_candidate_preview(path)
+        validation = validate_candidate_preview(path, deep=args.deep or args.full_decode, full_decode=args.full_decode)
         item = {
             "filename": path.name,
             **validation.to_dict(),
@@ -46,6 +48,8 @@ def main() -> None:
         "ok_count": sum(1 for item in items if item["status"] == "ok"),
         "invalid_count": sum(1 for item in items if item["status"] == "invalid"),
         "deleted_count": deleted,
+        "deep": args.deep or args.full_decode,
+        "full_decode": args.full_decode,
         "items": items,
     }
     if args.json:

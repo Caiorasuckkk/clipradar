@@ -52,7 +52,7 @@ def main() -> None:
         if step["name"] == "export_candidate_review_queue":
             processed_ids = _processed_video_ids_since(process_started_perf)
             if processed_ids:
-                step["command"].extend(["--video-id", ",".join(processed_ids)])
+                step["command"].append(f"--video-id={','.join(processed_ids)}")
 
         result = _run_step(step)
         results.append(result)
@@ -65,7 +65,13 @@ def main() -> None:
 
     finished_at = datetime.utcnow().isoformat()
     summary = _candidate_summary()
+    steps_failed = sum(1 for item in results if item["status"] == "error")
+    has_ready_candidates = summary["total_candidates"] > 0 and summary["preview_ready"] > 0
+    pipeline_status = "success"
+    if steps_failed > 0:
+        pipeline_status = "success_with_warnings" if has_ready_candidates else "failed"
     payload = {
+        "status": pipeline_status,
         "started_at": started_at,
         "finished_at": finished_at,
         "elapsed_seconds": round(time.perf_counter() - started_perf, 2),
@@ -76,14 +82,14 @@ def main() -> None:
         "steps_total": len(results),
         "steps_ok": sum(1 for item in results if item["status"] == "ok"),
         "steps_skipped": sum(1 for item in results if item["status"] == "dry_run"),
-        "steps_failed": sum(1 for item in results if item["status"] == "error"),
+        "steps_failed": steps_failed,
         "selected_videos_count": _selected_videos_count(results),
         "processed_videos_count": len(_processed_video_ids_since(process_started_perf)),
         "candidate_count": summary["total_candidates"],
         "preview_ready": summary["preview_ready"],
         "missing_preview": summary["missing_preview"],
         "candidate_pending_reviews": summary["pending"],
-        "next_action": "open_candidate_clips",
+        "next_action": _next_action(summary),
         "steps": results,
     }
     report_paths = _write_report(payload)
@@ -97,11 +103,12 @@ def main() -> None:
     print(f"preview_ready: {payload['preview_ready']}")
     print(f"missing_preview: {payload['missing_preview']}")
     print(f"candidate_pending_reviews: {payload['candidate_pending_reviews']}")
-    print("next_action: open_candidate_clips")
+    print(f"status: {pipeline_status}")
+    print(f"next_action: {payload['next_action']}")
     print(f"JSON: {report_paths['json']}")
     print(f"Markdown: {report_paths['md']}")
 
-    if payload["steps_failed"] > 0 and not args.continue_on_error:
+    if pipeline_status == "failed" and not args.continue_on_error:
         raise SystemExit(1)
 
 
@@ -193,6 +200,7 @@ def _run_step(step: Step) -> Step:
         return {
             **_base_step(step, started_at, started_perf),
             "status": "error",
+            "returncode": None,
             "stdout_tail": "",
             "stderr_tail": "",
             "error_message": str(exc),
@@ -201,9 +209,10 @@ def _run_step(step: Step) -> Step:
     return {
         **_base_step(step, started_at, started_perf),
         "status": status,
+        "returncode": completed.returncode,
         "stdout_tail": _tail(completed.stdout),
         "stderr_tail": _tail(completed.stderr),
-        "error_message": "" if status == "ok" else f"returncode={completed.returncode}",
+        "error_message": "" if status == "ok" else f"returncode={completed.returncode}: {_tail(completed.stderr or completed.stdout, 800)}",
     }
 
 
@@ -213,6 +222,7 @@ def _dry_run_step(step: Step) -> Step:
         "name": step["name"],
         "command": _command_for_display(step["command"]),
         "status": "dry_run",
+        "returncode": None,
         "started_at": started_at,
         "finished_at": started_at,
         "elapsed_seconds": 0.0,
@@ -254,6 +264,16 @@ def _candidate_summary() -> dict[str, int]:
     }
 
 
+def _next_action(summary: dict[str, int]) -> str:
+    if summary["total_candidates"] > 0 and summary["preview_ready"] > 0 and summary["pending"] > 0:
+        return "open_candidate_clips"
+    if summary["total_candidates"] > 0 and summary["missing_preview"] > 0:
+        return "render_candidate_previews"
+    if summary["total_candidates"] > 0:
+        return "view_reviewed_candidates"
+    return "run_analysis_again"
+
+
 def _selected_videos_count(results: list[Step]) -> int:
     for step in results:
         if step.get("name") != "review_selected_videos":
@@ -285,6 +305,7 @@ def _markdown_report(payload: dict[str, Any]) -> str:
         f"Elapsed seconds: {payload['elapsed_seconds']}",
         f"Steps OK: {payload['steps_ok']}",
         f"Steps failed: {payload['steps_failed']}",
+        f"Status: {payload['status']}",
         f"Candidates: {payload['candidate_count']}",
         f"Preview ready: {payload['preview_ready']}",
         f"Pending reviews: {payload['candidate_pending_reviews']}",
@@ -297,8 +318,21 @@ def _markdown_report(payload: dict[str, Any]) -> str:
                 f"## {index}. {step['name']} - {step['status']}",
                 "",
                 f"Command: `{step['command']}`",
+                f"Return code: {step.get('returncode')}",
                 f"Elapsed: {step['elapsed_seconds']}s",
                 f"Error: {step['error_message']}",
+                "",
+                "Stdout tail:",
+                "",
+                "```text",
+                step.get("stdout_tail", ""),
+                "```",
+                "",
+                "Stderr tail:",
+                "",
+                "```text",
+                step.get("stderr_tail", ""),
+                "```",
                 "",
             ]
         )

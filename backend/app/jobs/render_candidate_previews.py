@@ -34,6 +34,7 @@ def main() -> None:
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--clean-partials", action="store_true")
     parser.add_argument("--rerender-invalid", action="store_true")
+    parser.add_argument("--rerender-all", action="store_true")
     args = parser.parse_args()
 
     items = _load_queue_items()
@@ -48,14 +49,14 @@ def main() -> None:
         items = [item for item in items if str(item.get("video_id") or "") == args.video_id]
     if args.candidate_id:
         items = [item for item in items if str(item.get("candidate_id") or "") == args.candidate_id]
-    if args.only_missing:
-        items = [item for item in items if not validate_candidate_preview(_output_path_for_item(item)).valid]
-    if args.rerender_invalid:
+    if args.only_missing and not args.rerender_all:
+        items = [item for item in items if not validate_candidate_preview(_output_path_for_item(item), deep=True).valid]
+    if args.rerender_invalid and not args.rerender_all:
         items = [
             item
             for item in items
             if _output_path_for_item(item).exists()
-            and not validate_candidate_preview(_output_path_for_item(item)).valid
+            and not validate_candidate_preview(_output_path_for_item(item), deep=True).valid
         ]
     if args.max_missing is not None:
         items = items[: max(0, args.max_missing)]
@@ -164,9 +165,21 @@ def _render_item(
     command = _ffmpeg_command(source_path, output_path, start, duration, overwrite)
     result["ffmpeg_command"] = " ".join(command)
     if output_path.exists() and not overwrite:
-        result["status"] = "skipped"
-        result["error_message"] = "preview já existe; use --overwrite"
-        return result
+        validation = validate_candidate_preview(output_path, deep=True)
+        result["preview_validation"] = validation.to_dict()
+        if validation.valid:
+            result["status"] = "skipped"
+            result["error_message"] = "preview já existe; use --overwrite"
+            return result
+        try:
+            output_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    if output_path.exists() and overwrite:
+        try:
+            output_path.unlink(missing_ok=True)
+        except Exception:
+            pass
     if dry_run:
         result["status"] = "skipped"
         result["error_message"] = "dry-run: renderização não executada"
@@ -182,6 +195,10 @@ def _render_item(
             check=False,
         )
     except Exception as exc:
+        try:
+            output_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         result["status"] = "error"
         result["error_message"] = str(exc)
         return result
@@ -191,9 +208,9 @@ def _render_item(
         except Exception:
             pass
         result["status"] = "error"
-        result["error_message"] = (completed.stderr or completed.stdout or "").strip()[:1000]
+        result["error_message"] = _tail((completed.stderr or completed.stdout or "").strip(), 1200)
         return result
-    validation = validate_candidate_preview(output_path)
+    validation = validate_candidate_preview(output_path, deep=True)
     result["preview_validation"] = validation.to_dict()
     if not validation.valid:
         try:
@@ -358,18 +375,34 @@ def _ffmpeg_command(source_path: Path, output_path: Path, start: float, duration
         str(source_path),
         "-t",
         f"{duration:.3f}",
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-vf",
+        "scale=720:-2",
         "-c:v",
         "libx264",
+        "-profile:v",
+        "baseline",
+        "-level",
+        "3.1",
         "-preset",
         "veryfast",
         "-crf",
-        "20",
+        "22",
         "-pix_fmt",
         "yuv420p",
+        "-x264-params",
+        "keyint=48:min-keyint=48:scenecut=0",
         "-c:a",
         "aac",
         "-b:a",
-        "160k",
+        "128k",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
         "-movflags",
         "+faststart",
         str(output_path),
@@ -416,6 +449,13 @@ def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as file:
         json.dump(payload, file, ensure_ascii=False, indent=2)
+
+
+def _tail(value: str, limit: int) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
 
 
 def _to_float(value: object) -> float:

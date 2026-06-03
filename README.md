@@ -557,6 +557,48 @@ Backend smoke tests:
 
 The Flutter app still only calls the backend API. It does not run local commands directly, does not publish anything, and uses the allowlisted `find_videos_flow` job through `/ops/jobs/run`.
 
+## ClipRadar 0.5.35 - Post Metadata + Publishing Tracker
+
+Generate deterministic posting metadata from the stable `posting_package/latest` package:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.export_post_metadata
+```
+
+The job writes `backend/app/storage/post_metadata/post_metadata.json`, `post_metadata.md`, and `post_status.json`. It prepares suggested title, description, hashtags, package video path, final review context, and local posting status. It does not publish, render, transcribe, download, call OpenAI, call Whisper, or touch the analyzer.
+
+Post tracking API:
+
+```text
+GET  /posts?status=not_posted
+GET  /posts?status=all
+GET  /posts/{post_id}
+POST /posts/{post_id}
+GET  /posts/summary
+GET  /posting_package/latest/videos/{filename}
+```
+
+The Android app now has a `Posts` tab to preview package videos, copy suggested title/description/hashtags, choose TikTok/Instagram/YouTube Shorts, add notes, and mark clips as `posted`, `scheduled`, `not_posted`, or `do_not_post`. The Operations tab includes `Gerar metadados` for the allowlisted `export_post_metadata` job.
+
+## ClipRadar 0.5.36.6 - Auto Generate Finals After Candidate Approval
+
+When a Candidate Clip is saved as `approved`, the backend now queues final generation automatically and returns `auto_generation_status` in the review response. The app advances immediately and shows a small message while the background worker prepares exports, verticals, finals, metadata, and `posting_package/latest`.
+
+Useful commands and endpoints:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.generate_finals_for_approved_candidates --status-only
+.\.ven\Scripts\python.exe -m app.jobs.generate_finals_for_approved_candidates
+.\.ven\Scripts\python.exe -m app.jobs.generate_finals_for_approved_candidates --retry-failed
+```
+
+```text
+POST /generation/approved/trigger
+GET  /generation/approved/status
+```
+
+This does not publish, does not use OpenAI, does not use Whisper, and does not run the analyzer. The state file lives in `backend/app/storage/generation_state/approved_generation_state.json`.
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

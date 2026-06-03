@@ -22,7 +22,9 @@ backend/app/storage/downloads/*
 backend/app/storage/exports/*
 backend/app/storage/final_exports/*
 backend/app/storage/final_reviews/*
+backend/app/storage/generation_state/*
 backend/app/storage/job_runs/*
+backend/app/storage/post_metadata/*
 backend/app/storage/posting_package/*
 backend/app/storage/reviews/*
 backend/app/storage/subtitled_exports/*

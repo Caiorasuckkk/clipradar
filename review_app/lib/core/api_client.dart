@@ -10,6 +10,8 @@ import '../models/job_run.dart';
 import '../models/ops_status.dart';
 import '../models/candidate_clip.dart';
 import '../models/candidate_summary.dart';
+import '../models/post_item.dart';
+import '../models/posts_summary.dart';
 import 'app_config.dart';
 
 class ApiClient {
@@ -28,6 +30,8 @@ class ApiClient {
   String finalExportUrl(String filename) => '$baseUrl/final_exports/$filename';
   String candidatePreviewUrl(String filename) =>
       '$baseUrl/candidate_previews/$filename';
+  String postingPackageVideoUrl(String filename) =>
+      '$baseUrl/posting_package/latest/videos/$filename';
 
   Future<List<ReviewClip>> fetchClips({String status = 'all'}) async {
     final response = await _client.get(
@@ -151,7 +155,7 @@ class ApiClient {
     );
   }
 
-  Future<void> saveCandidateReview({
+  Future<CandidateReviewSaveResult> saveCandidateReview({
     required String candidateId,
     required String status,
     required int rating,
@@ -171,6 +175,35 @@ class ApiClient {
       }),
     );
     _throwIfBad(response);
+    return CandidateReviewSaveResult.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ApprovedGenerationStatus> fetchApprovedGenerationStatus() async {
+    final response = await _client.get(_uri('/generation/approved/status'));
+    _throwIfBad(response);
+    return ApprovedGenerationStatus.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ApprovedGenerationStatus> triggerApprovedGeneration({
+    String? candidateId,
+    bool retryFailed = false,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/approved/trigger'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'candidate_id': candidateId,
+        'run_async': true,
+        'retry_failed': retryFailed,
+      }),
+    );
+    _throwIfBad(response);
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    return fetchApprovedGenerationStatus();
   }
 
   Future<OpsStatus> fetchOpsStatus() async {
@@ -229,10 +262,102 @@ class ApiClient {
     return JobRun.fromJson(runs.first as Map<String, dynamic>);
   }
 
+  Future<List<PostItem>> fetchPosts({String status = 'not_posted'}) async {
+    final response = await _client.get(_uri('/posts', {'status': status}));
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final posts = payload['posts'] as List<dynamic>? ?? [];
+    return posts
+        .map((item) => PostItem.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<PostsSummary> fetchPostsSummary() async {
+    final response = await _client.get(_uri('/posts/summary'));
+    _throwIfBad(response);
+    return PostsSummary.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> updatePostStatus({
+    required String postId,
+    required String status,
+    required List<String> platforms,
+    String postedAt = '',
+    String postUrl = '',
+    required String notes,
+  }) async {
+    final response = await _client.post(
+      _uri('/posts/$postId'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'status': status,
+        'platforms': platforms,
+        'posted_at': postedAt,
+        'post_url': postUrl,
+        'notes': notes,
+      }),
+    );
+    _throwIfBad(response);
+  }
+
   void _throwIfBad(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) return;
     throw ApiException('HTTP ${response.statusCode}: ${response.body}');
   }
+}
+
+class CandidateReviewSaveResult {
+  const CandidateReviewSaveResult({
+    required this.autoGenerationStatus,
+    required this.autoGenerationMessage,
+  });
+
+  final String autoGenerationStatus;
+  final String autoGenerationMessage;
+
+  factory CandidateReviewSaveResult.fromJson(Map<String, dynamic> json) {
+    return CandidateReviewSaveResult(
+      autoGenerationStatus: json['auto_generation_status']?.toString() ?? '',
+      autoGenerationMessage: json['auto_generation_message']?.toString() ?? '',
+    );
+  }
+}
+
+class ApprovedGenerationStatus {
+  const ApprovedGenerationStatus({
+    required this.running,
+    required this.pendingCount,
+    required this.generatedCount,
+    required this.failedCount,
+    required this.lastRunId,
+    required this.latestError,
+  });
+
+  final bool running;
+  final int pendingCount;
+  final int generatedCount;
+  final int failedCount;
+  final String lastRunId;
+  final String latestError;
+
+  factory ApprovedGenerationStatus.fromJson(Map<String, dynamic> json) {
+    return ApprovedGenerationStatus(
+      running: json['running'] == true,
+      pendingCount: _intValue(json['pending_count']),
+      generatedCount: _intValue(json['generated_count']),
+      failedCount: _intValue(json['failed_count']),
+      lastRunId: json['last_run_id']?.toString() ?? '',
+      latestError: json['latest_error']?.toString() ?? '',
+    );
+  }
+}
+
+int _intValue(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
 class ApiException implements Exception {

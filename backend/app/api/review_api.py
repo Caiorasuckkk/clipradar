@@ -28,6 +28,7 @@ from app.services.candidate_review_service import (
     load_candidate_reviews,
     save_candidate_reviews,
 )
+from app.services.approved_generation_service import trigger_approved_generation
 
 
 router = APIRouter()
@@ -343,7 +344,28 @@ def save_candidate_clip_review(candidate_id: str, payload: CandidateClipReviewPa
     }
     reviews[candidate_id] = review
     save_candidate_reviews(reviews)
-    return {"message": "candidate_review_saved", "review": review}
+    auto_generation = {
+        "status": "disabled",
+        "candidate_id": candidate_id,
+        "run_id": "",
+    }
+    auto_generation_message = ""
+    if payload.status == "approved":
+        auto_generation = trigger_approved_generation(candidate_id=candidate_id, run_async=True)
+        status = str(auto_generation.get("status") or "")
+        if status == "already_generated":
+            auto_generation_message = "Corte aprovado. Final já gerado."
+        elif status == "running":
+            auto_generation_message = "Corte aprovado. Geração já está rodando em segundo plano."
+        else:
+            auto_generation_message = "Corte aprovado. Geração iniciada em segundo plano."
+    return {
+        "message": "candidate_review_saved",
+        "review": review,
+        "auto_generation_status": auto_generation.get("status", "disabled"),
+        "auto_generation_message": auto_generation_message,
+        "auto_generation": auto_generation,
+    }
 
 
 @router.get("/candidate/summary")

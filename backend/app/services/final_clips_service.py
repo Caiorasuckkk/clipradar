@@ -130,6 +130,7 @@ def _final_clip_payload(
     return {
         "final_clip_id": final_clip_id,
         "clip_id": clip_id,
+        "candidate_id": plan_item.get("candidate_id") or rendered_review.get("candidate_id"),
         "video_id": str(plan_item.get("video_id") or rendered_review.get("video_id") or video_id),
         "video_title": str(plan_item.get("video_title") or ""),
         "original_youtube_url": str(plan_item.get("youtube_url") or ""),

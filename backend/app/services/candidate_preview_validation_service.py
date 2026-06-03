@@ -22,6 +22,7 @@ class PreviewValidationResult:
     format_name: str
     video_codec: str
     audio_codec: str
+    pixel_format: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -33,10 +34,11 @@ class PreviewValidationResult:
             "format_name": self.format_name,
             "video_codec": self.video_codec,
             "audio_codec": self.audio_codec,
+            "pixel_format": self.pixel_format,
         }
 
 
-def validate_candidate_preview(path: Path) -> PreviewValidationResult:
+def validate_candidate_preview(path: Path, deep: bool = False, full_decode: bool = False) -> PreviewValidationResult:
     path = Path(path)
     if not path.exists() or not path.is_file():
         return _invalid(path, "file_not_found")
@@ -67,12 +69,12 @@ def validate_candidate_preview(path: Path) -> PreviewValidationResult:
             check=False,
         )
     except Exception as exc:
-        fallback = _validate_with_ffmpeg(path, file_size)
+        fallback = _validate_with_ffmpeg(path, file_size, deep=deep, full_decode=full_decode)
         if fallback:
             return fallback
         return _invalid(path, f"ffprobe_error: {exc}", file_size_bytes=file_size)
     if completed.returncode != 0:
-        fallback = _validate_with_ffmpeg(path, file_size)
+        fallback = _validate_with_ffmpeg(path, file_size, deep=deep, full_decode=full_decode)
         if fallback:
             return fallback
         return _invalid(path, (completed.stderr or completed.stdout or "ffprobe_failed").strip()[:500], file_size_bytes=file_size)
@@ -95,15 +97,24 @@ def validate_candidate_preview(path: Path) -> PreviewValidationResult:
     audio_stream = next((stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "audio"), None)
     video_codec = str(video_stream.get("codec_name") or "") if isinstance(video_stream, dict) else ""
     audio_codec = str(audio_stream.get("codec_name") or "") if isinstance(audio_stream, dict) else ""
+    pixel_format = str(video_stream.get("pix_fmt") or "") if isinstance(video_stream, dict) else ""
 
     if "mp4" not in format_name and "mov" not in format_name:
-        return _invalid(path, f"invalid_container:{format_name}", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec)
+        return _invalid(path, f"invalid_container:{format_name}", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
     if not video_stream:
-        return _invalid(path, "missing_video_stream", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec)
+        return _invalid(path, "missing_video_stream", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
     if video_codec != "h264":
-        return _invalid(path, f"invalid_video_codec:{video_codec}", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec)
-    if duration <= 0:
-        return _invalid(path, "invalid_duration", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec)
+        return _invalid(path, f"invalid_video_codec:{video_codec}", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
+    if pixel_format != "yuv420p":
+        return _invalid(path, f"invalid_pixel_format:{pixel_format}", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
+    if audio_stream and audio_codec != "aac":
+        return _invalid(path, f"invalid_audio_codec:{audio_codec}", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
+    if duration <= 1:
+        return _invalid(path, "invalid_duration", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
+    if deep:
+        decode_error = _decode_validation_error(path, full_decode=full_decode)
+        if decode_error:
+            return _invalid(path, decode_error, file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
 
     return PreviewValidationResult(
         path=str(path),
@@ -114,10 +125,34 @@ def validate_candidate_preview(path: Path) -> PreviewValidationResult:
         format_name=format_name,
         video_codec=video_codec,
         audio_codec=audio_codec,
+        pixel_format=pixel_format,
     )
 
 
-def _validate_with_ffmpeg(path: Path, file_size: int) -> PreviewValidationResult | None:
+def _decode_validation_error(path: Path, full_decode: bool = False) -> str:
+    command = [_ffmpeg_executable(), "-v", "error", "-i", str(path)]
+    if not full_decode:
+        command.extend(["-t", "3"])
+    command.extend(["-f", "null", "-"])
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180 if full_decode else 45,
+            check=False,
+        )
+    except Exception as exc:
+        return f"decode_error: {exc}"
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "ffmpeg_decode_failed").strip()
+        return f"decode_failed: {message[:500]}"
+    return ""
+
+
+def _validate_with_ffmpeg(path: Path, file_size: int, deep: bool = False, full_decode: bool = False) -> PreviewValidationResult | None:
     command = [_ffmpeg_executable(), "-hide_banner", "-i", str(path)]
     try:
         completed = subprocess.run(
@@ -145,14 +180,21 @@ def _validate_with_ffmpeg(path: Path, file_size: int) -> PreviewValidationResult
         duration = hours * 3600 + minutes * 60 + seconds
     video_codec = "h264" if re.search(r"Video:\s*h264\b", output, re.IGNORECASE) else ""
     audio_codec = "aac" if re.search(r"Audio:\s*aac\b", output, re.IGNORECASE) else ""
+    pixel_format = "yuv420p" if re.search(r"Video:\s*h264\b[^\n]*\byuv420p\b", output, re.IGNORECASE) else ""
     if "Invalid data found" in output or "moov atom not found" in output:
-        return _invalid(path, "ffmpeg_invalid_data", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec)
+        return _invalid(path, "ffmpeg_invalid_data", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
     if "mp4" not in format_name and "mov" not in format_name:
-        return _invalid(path, f"invalid_container:{format_name}", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec)
+        return _invalid(path, f"invalid_container:{format_name}", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
     if not video_codec:
-        return _invalid(path, "missing_or_invalid_video_stream", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec)
-    if duration is None or duration <= 0:
-        return _invalid(path, "invalid_duration", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec)
+        return _invalid(path, "missing_or_invalid_video_stream", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
+    if pixel_format != "yuv420p":
+        return _invalid(path, f"invalid_pixel_format:{pixel_format}", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
+    if duration is None or duration <= 1:
+        return _invalid(path, "invalid_duration", file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
+    if deep:
+        decode_error = _decode_validation_error(path, full_decode=full_decode)
+        if decode_error:
+            return _invalid(path, decode_error, file_size_bytes=file_size, duration_seconds=duration, format_name=format_name, video_codec=video_codec, audio_codec=audio_codec, pixel_format=pixel_format)
     return PreviewValidationResult(
         path=str(path),
         valid=True,
@@ -162,6 +204,7 @@ def _validate_with_ffmpeg(path: Path, file_size: int) -> PreviewValidationResult
         format_name=format_name,
         video_codec=video_codec,
         audio_codec=audio_codec,
+        pixel_format=pixel_format,
     )
 
 
@@ -173,6 +216,7 @@ def _invalid(
     format_name: str = "",
     video_codec: str = "",
     audio_codec: str = "",
+    pixel_format: str = "",
 ) -> PreviewValidationResult:
     return PreviewValidationResult(
         path=str(path),
@@ -183,6 +227,7 @@ def _invalid(
         format_name=format_name,
         video_codec=video_codec,
         audio_codec=audio_codec,
+        pixel_format=pixel_format,
     )
 
 
