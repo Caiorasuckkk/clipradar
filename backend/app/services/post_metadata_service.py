@@ -41,15 +41,18 @@ def export_post_metadata() -> dict[str, Any]:
     items = package.get("items", []) if isinstance(package, dict) else []
     statuses = load_post_status()
     now = datetime.utcnow().isoformat()
-    exported_items = [
+    raw_exported_items = [
         _post_item_from_package_item(item, statuses.get(_post_id(item), {}), now)
         for item in items
         if isinstance(item, dict)
     ]
+    exported_items, duplicate_posts_removed = _dedupe_post_items(raw_exported_items)
     payload = {
         "generated_at": now,
         "source_package_path": str(PACKAGE_PATH),
         "items_count": len(exported_items),
+        "raw_items_count": len(raw_exported_items),
+        "duplicate_posts_removed": duplicate_posts_removed,
         "items": exported_items,
     }
     config.STORAGE_POST_METADATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -188,6 +191,29 @@ def _status_fields(status_item: dict[str, Any]) -> dict[str, Any]:
 def _post_id(item: dict[str, Any]) -> str:
     base = str(item.get("final_clip_id") or item.get("clip_id") or item.get("package_video_filename") or "post")
     return _safe_id(base)
+
+
+def _dedupe_post_items(items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    duplicates = 0
+    for item in items:
+        key = str(
+            item.get("candidate_id")
+            or item.get("final_clip_id")
+            or item.get("clip_id")
+            or item.get("post_id")
+            or item.get("package_video_filename")
+            or ""
+        )
+        if not key:
+            key = f"post_{len(order)}"
+        if key in merged:
+            duplicates += 1
+        else:
+            order.append(key)
+        merged[key] = item
+    return [merged[key] for key in order], duplicates
 
 
 def _suggest_title(video_title: str) -> str:

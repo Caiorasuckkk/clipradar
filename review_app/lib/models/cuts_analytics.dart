@@ -284,30 +284,46 @@ class CutsAnalyticsCache {
     required this.readyCount,
     required this.partialCount,
     required this.invalidCount,
+    required this.staleCount,
     required this.transcriptCachedCount,
     required this.clipsCachedCount,
     required this.previewsCachedCount,
     required this.finalsCachedCount,
     required this.cacheHitsLatestRun,
     required this.cacheMissesLatestRun,
+    required this.cachePartialsLatestRun,
+    required this.cacheBypassedLatestRun,
     required this.videosReusedLatestRun,
     required this.videosProcessedFromScratchLatestRun,
     required this.estimatedSecondsSavedLatestRun,
+    required this.duplicateCandidatesDetectedLatestRun,
+    required this.duplicatePostsDetected,
+    required this.approvedMissingFinals,
+    required this.orphanFinals,
+    required this.orphanPosts,
   });
 
   final int totalVideosCached;
   final int readyCount;
   final int partialCount;
   final int invalidCount;
+  final int staleCount;
   final int transcriptCachedCount;
   final int clipsCachedCount;
   final int previewsCachedCount;
   final int finalsCachedCount;
   final int cacheHitsLatestRun;
   final int cacheMissesLatestRun;
+  final int cachePartialsLatestRun;
+  final int cacheBypassedLatestRun;
   final int videosReusedLatestRun;
   final int videosProcessedFromScratchLatestRun;
   final num? estimatedSecondsSavedLatestRun;
+  final int duplicateCandidatesDetectedLatestRun;
+  final int duplicatePostsDetected;
+  final int approvedMissingFinals;
+  final int orphanFinals;
+  final int orphanPosts;
 
   factory CutsAnalyticsCache.fromJson(Map<String, dynamic> json) {
     return CutsAnalyticsCache(
@@ -315,12 +331,15 @@ class CutsAnalyticsCache {
       readyCount: _int(json['ready_count']),
       partialCount: _int(json['partial_count']),
       invalidCount: _int(json['invalid_count']),
+      staleCount: _int(json['stale_count']),
       transcriptCachedCount: _int(json['transcript_cached_count']),
       clipsCachedCount: _int(json['clips_cached_count']),
       previewsCachedCount: _int(json['previews_cached_count']),
       finalsCachedCount: _int(json['finals_cached_count']),
       cacheHitsLatestRun: _int(json['cache_hits_latest_run']),
       cacheMissesLatestRun: _int(json['cache_misses_latest_run']),
+      cachePartialsLatestRun: _int(json['cache_partials_latest_run']),
+      cacheBypassedLatestRun: _int(json['cache_bypassed_latest_run']),
       videosReusedLatestRun: _int(json['videos_reused_latest_run']),
       videosProcessedFromScratchLatestRun: _int(
         json['videos_processed_from_scratch_latest_run'],
@@ -328,6 +347,13 @@ class CutsAnalyticsCache {
       estimatedSecondsSavedLatestRun: _num(
         json['estimated_seconds_saved_latest_run'],
       ),
+      duplicateCandidatesDetectedLatestRun: _int(
+        json['duplicate_candidates_detected_latest_run'],
+      ),
+      duplicatePostsDetected: _int(json['duplicate_posts_detected']),
+      approvedMissingFinals: _int(json['approved_missing_finals']),
+      orphanFinals: _int(json['orphan_finals']),
+      orphanPosts: _int(json['orphan_posts']),
     );
   }
 }

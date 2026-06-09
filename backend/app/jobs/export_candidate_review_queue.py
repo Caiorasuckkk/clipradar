@@ -75,6 +75,9 @@ def main() -> None:
         if isinstance(existing_payload, dict) and isinstance(existing_payload.get("items"), list)
         else []
     )
+    duplicate_candidate_ids_removed = _duplicate_candidate_id_count(
+        [item for item in existing_items if isinstance(item, dict)] + items
+    ) if existing_items and not args.overwrite else 0
     if existing_items and not args.overwrite:
         items = _merge_existing_items(existing_items, items)
 
@@ -99,6 +102,9 @@ def main() -> None:
         "candidates_dropped_by_quality": max(0, len(raw_items) - len(filtered_items)),
         "candidates_dropped_by_dedupe": duplicates_removed,
         "candidates_dropped_by_limit": max(0, len(deduped_items) - len(items)),
+        "duplicate_candidate_ids_removed": duplicate_candidate_ids_removed,
+        "duplicates_removed_from_cache": max(0, len(existing_items) + len(selected_items) - len(items)) if existing_items and not args.overwrite else 0,
+        "duplicates_removed_from_new_processing": duplicates_removed,
         "items_count": len(items),
         "merged_existing": bool(existing_items and not args.overwrite),
         "existing_items_count": len(existing_items),
@@ -122,6 +128,9 @@ def main() -> None:
     print(f"candidates_dropped_by_quality: {max(0, len(raw_items) - len(filtered_items))}")
     print(f"candidates_dropped_by_dedupe: {duplicates_removed}")
     print(f"candidates_dropped_by_limit: {max(0, len(deduped_items) - len(items))}")
+    print(f"duplicate_candidate_ids_removed: {duplicate_candidate_ids_removed}")
+    print(f"duplicates_removed_from_cache: {payload['duplicates_removed_from_cache']}")
+    print(f"duplicates_removed_from_new_processing: {payload['duplicates_removed_from_new_processing']}")
     print(f"candidates: {len(items)}")
     print(f"merged_existing: {bool(existing_items and not args.overwrite)}")
     print(f"existing_items_count: {len(existing_items)}")
@@ -264,6 +273,19 @@ def _merge_existing_items(existing_items: list[Any], new_items: list[dict[str, A
         if candidate_id:
             merged[candidate_id] = item
     return list(merged.values())
+
+
+def _duplicate_candidate_id_count(items: list[dict[str, Any]]) -> int:
+    seen: set[str] = set()
+    duplicates = 0
+    for item in items:
+        candidate_id = str(item.get("candidate_id") or "")
+        if not candidate_id:
+            continue
+        if candidate_id in seen:
+            duplicates += 1
+        seen.add(candidate_id)
+    return duplicates
 
 
 def _stats_by_video(

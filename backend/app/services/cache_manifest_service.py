@@ -206,20 +206,103 @@ def cache_summary() -> dict[str, Any]:
     latest_cache = _cache_metrics_from_run(latest_run)
     if not any(latest_cache.values()):
         latest_cache = _cache_metrics_from_manifest(manifest)
+    integrity = cache_integrity_summary(manifest=manifest)
     return {
         "total_videos_cached": len(entries),
         "ready_count": statuses.get("ready", 0),
         "partial_count": statuses.get("partial", 0),
         "invalid_count": statuses.get("invalid", 0),
+        "stale_count": integrity["stale_count"],
         "transcript_cached_count": sum(1 for entry in entries if entry.get("transcript_exists")),
         "clips_cached_count": sum(1 for entry in entries if entry.get("clips_exists")),
         "previews_cached_count": sum(1 for entry in entries if int(entry.get("previews_ready_count") or 0) > 0),
         "finals_cached_count": sum(1 for entry in entries if int(entry.get("finals_count") or 0) > 0),
         "cache_hits_latest_run": latest_cache["cache_hits"],
         "cache_misses_latest_run": latest_cache["cache_misses"],
+        "cache_partials_latest_run": latest_cache["cache_partials"],
+        "cache_bypassed_latest_run": latest_cache["cache_bypassed"],
         "videos_reused_latest_run": latest_cache["videos_reused"],
         "videos_processed_from_scratch_latest_run": latest_cache["videos_processed_from_scratch"],
         "estimated_seconds_saved_latest_run": latest_cache["estimated_seconds_saved"],
+        "duplicate_candidates_detected_latest_run": _int(latest_run.get("duplicate_candidates_detected"))
+        or _int(latest_run.get("duplicates_removed"))
+        or integrity["duplicate_candidates"],
+        "duplicate_posts_detected": integrity["duplicate_posts"],
+        "approved_missing_finals": integrity["approved_missing_finals"],
+        "orphan_finals": integrity["orphan_finals"],
+        "orphan_posts": integrity["orphan_posts"],
+    }
+
+
+def cache_integrity_summary(manifest: dict[str, Any] | None = None) -> dict[str, Any]:
+    manifest = manifest or load_manifest()
+    entries = list((manifest.get("videos") or {}).values()) if isinstance(manifest, dict) else []
+    stale_entries = [
+        str(entry.get("video_id") or "")
+        for entry in entries
+        if str(entry.get("cache_status") or "") in {"stale", "invalid"}
+    ]
+    candidate_items = _load_candidate_items()
+    candidate_ids = [str(item.get("candidate_id") or "") for item in candidate_items if item.get("candidate_id")]
+    duplicate_candidate_ids = _duplicates(candidate_ids)
+    post_items = _load_post_items()
+    post_keys = [_post_stable_key(item) for item in post_items]
+    duplicate_post_keys = _duplicates([key for key in post_keys if key])
+    approved_candidate_ids = _approved_candidate_ids(candidate_items)
+    generated_candidate_ids = {
+        str(item.get("candidate_id") or "")
+        for item in post_items
+        if item.get("candidate_id") and _post_has_file(item)
+    }
+    generated_candidate_ids.update(_candidate_ids_from_final_files(approved_candidate_ids))
+    approved_missing = sorted(approved_candidate_ids - generated_candidate_ids)
+    known_preview_files = {
+        str(item.get("output_preview_filename") or "")
+        for item in candidate_items
+        if item.get("output_preview_filename")
+    }
+    orphan_previews = [
+        path.name
+        for path in config.STORAGE_CANDIDATE_PREVIEWS_DIR.glob("*.mp4")
+        if path.name not in known_preview_files
+    ]
+    known_final_names = {
+        Path(str(item.get("package_video_path") or "")).name
+        for item in post_items
+        if item.get("package_video_path")
+    }
+    orphan_finals = [
+        path.name
+        for path in config.STORAGE_FINAL_EXPORTS_DIR.glob("*.mp4")
+        if path.name not in known_final_names and not any(candidate_id and candidate_id in path.name for candidate_id in approved_candidate_ids)
+    ]
+    orphan_posts = [
+        str(item.get("post_id") or item.get("candidate_id") or item.get("package_video_filename") or "")
+        for item in post_items
+        if not _post_has_file(item)
+    ]
+    missing_files = _missing_manifest_files(entries)
+    invalid_json = _invalid_json_files(entries)
+    return {
+        "stale_count": len([item for item in stale_entries if item]),
+        "stale_entries": [item for item in stale_entries if item],
+        "missing_files": missing_files,
+        "missing_files_count": len(missing_files),
+        "invalid_json": invalid_json,
+        "invalid_json_count": len(invalid_json),
+        "orphan_previews": len(orphan_previews),
+        "orphan_preview_files": orphan_previews[:100],
+        "orphan_finals": len(orphan_finals),
+        "orphan_final_files": orphan_finals[:100],
+        "orphan_posts": len(orphan_posts),
+        "orphan_post_ids": orphan_posts[:100],
+        "duplicate_candidates": len(duplicate_candidate_ids),
+        "duplicate_candidate_ids": duplicate_candidate_ids[:100],
+        "duplicate_posts": len(duplicate_post_keys),
+        "duplicate_post_keys": duplicate_post_keys[:100],
+        "approved_missing_finals": len(approved_missing),
+        "approved_missing_final_candidate_ids": approved_missing[:100],
+        "posts_missing_files": len(orphan_posts),
     }
 
 
@@ -229,6 +312,8 @@ def _cache_metrics_from_run(run: dict[str, Any]) -> dict[str, Any]:
     return {
         "cache_hits": _int(run.get("cache_hits")) or parsed.get("cache_hits", 0),
         "cache_misses": _int(run.get("cache_misses")) or parsed.get("cache_misses", 0),
+        "cache_partials": _int(run.get("cache_partials")) or parsed.get("cache_partials", 0),
+        "cache_bypassed": _int(run.get("cache_bypassed")) or parsed.get("cache_bypassed", 0),
         "videos_reused": _int(run.get("videos_reused_from_cache")) or parsed.get("videos_reused", 0),
         "videos_processed_from_scratch": _int(run.get("videos_processed_from_scratch")) or parsed.get("videos_processed_from_scratch", 0),
         "estimated_seconds_saved": _float_or_none(run.get("estimated_seconds_saved")) or parsed.get("estimated_seconds_saved"),
@@ -242,6 +327,8 @@ def _cache_metrics_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     return {
         "cache_hits": _int(latest.get("cache_hits")),
         "cache_misses": _int(latest.get("cache_misses")),
+        "cache_partials": _int(latest.get("cache_partials")),
+        "cache_bypassed": _int(latest.get("cache_bypassed")),
         "videos_reused": _int(latest.get("videos_reused")),
         "videos_processed_from_scratch": _int(latest.get("videos_processed_from_scratch")),
         "estimated_seconds_saved": _float_or_none(latest.get("estimated_seconds_saved")),
@@ -335,6 +422,97 @@ def _posts_count(video_id: str, candidate_ids: list[str]) -> int:
 def _load_post_items() -> list[dict[str, Any]]:
     payload = _load_json(config.STORAGE_POST_METADATA_DIR / "post_metadata.json")
     return [item for item in payload.get("items", []) if isinstance(item, dict)] if isinstance(payload, dict) else []
+
+
+def _load_candidate_items() -> list[dict[str, Any]]:
+    payload = _load_json(config.STORAGE_CANDIDATE_QUEUE_DIR / "candidate_review_queue.json")
+    return [item for item in payload.get("items", []) if isinstance(item, dict)] if isinstance(payload, dict) else []
+
+
+def _approved_candidate_ids(candidate_items: list[dict[str, Any]]) -> set[str]:
+    approved: set[str] = set()
+    for item in candidate_items:
+        candidate_id = str(item.get("candidate_id") or "")
+        if not candidate_id:
+            continue
+        status = str(item.get("review_status") or item.get("status") or "").lower()
+        if status == "approved":
+            approved.add(candidate_id)
+    reviews_payload = _load_json(config.STORAGE_CANDIDATE_QUEUE_DIR / "candidate_reviews.json")
+    if isinstance(reviews_payload, dict):
+        reviews = reviews_payload.get("reviews") if isinstance(reviews_payload.get("reviews"), list) else []
+        for review in reviews:
+            if not isinstance(review, dict):
+                continue
+            candidate_id = str(review.get("candidate_id") or "")
+            status = str(review.get("status") or "").lower()
+            if candidate_id and status == "approved":
+                approved.add(candidate_id)
+    return approved
+
+
+def _candidate_ids_from_final_files(candidate_ids: set[str]) -> set[str]:
+    generated: set[str] = set()
+    if not candidate_ids:
+        return generated
+    for path in config.STORAGE_FINAL_EXPORTS_DIR.glob("*.mp4"):
+        name = path.name
+        if not path.is_file() or path.stat().st_size <= MIN_MEDIA_BYTES:
+            continue
+        for candidate_id in candidate_ids:
+            if candidate_id and candidate_id in name:
+                generated.add(candidate_id)
+    return generated
+
+
+def _post_stable_key(item: dict[str, Any]) -> str:
+    return str(
+        item.get("candidate_id")
+        or item.get("final_clip_id")
+        or item.get("clip_id")
+        or item.get("post_id")
+        or item.get("package_video_filename")
+        or ""
+    )
+
+
+def _post_has_file(item: dict[str, Any]) -> bool:
+    raw_path = str(item.get("package_video_path") or "")
+    if not raw_path:
+        filename = str(item.get("package_video_filename") or "")
+        raw_path = str(config.STORAGE_POSTING_PACKAGE_DIR / "latest" / "videos" / filename) if filename else ""
+    if not raw_path:
+        return False
+    path = Path(raw_path)
+    return path.is_file() and path.stat().st_size > MIN_MEDIA_BYTES
+
+
+def _missing_manifest_files(entries: list[dict[str, Any]]) -> list[str]:
+    missing: list[str] = []
+    for entry in entries:
+        for key in ("downloaded_video_path", "downloaded_audio_path"):
+            raw_path = str(entry.get(key) or "")
+            if raw_path and not Path(raw_path).exists():
+                missing.append(raw_path)
+    return missing[:200]
+
+
+def _invalid_json_files(entries: list[dict[str, Any]]) -> list[str]:
+    invalid: list[str] = []
+    for entry in entries:
+        for key in ("transcript_path", "clips_path"):
+            raw_path = str(entry.get(key) or "")
+            if not raw_path:
+                continue
+            path = Path(raw_path)
+            if path.exists() and _load_json(path) == {}:
+                invalid.append(raw_path)
+    return invalid[:200]
+
+
+def _duplicates(values: list[str]) -> list[str]:
+    counts = Counter(value for value in values if value)
+    return sorted(value for value, count in counts.items() if count > 1)
 
 
 def _first_valid_media(directories: list[Path], video_id: str, video_exts: set[str]) -> Path | None:

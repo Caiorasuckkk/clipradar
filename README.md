@@ -509,6 +509,21 @@ Use the batch status and retry tools to operate local review batches without gue
 .\.ven\Scripts\python.exe -m app.jobs.export_ready_to_post_package --clean-old
 ```
 
+## ClipRadar 0.5.41 - Cache QA + Deep Search Optimization
+
+Ferramentas para auditar o cache, conferir reaproveitamento antes de processar e acompanhar duplicatas/orfaos em Analytics.
+
+Comandos:
+
+```powershell
+python -m app.jobs.audit_cache_status
+python -m app.jobs.audit_cache_integrity
+python -m app.jobs.test_cache_reuse --limit 5 --only-ready --dry-run
+python -m app.jobs.process_queue --video-id=Pu2GGvrDK_w --cache-check-only
+```
+
+Esses jobs nao usam OpenAI, nao chamam Whisper, nao baixam videos e nao publicam. A Busca Profunda continua podendo reaproveitar transcripts, clips e previews existentes quando `--overwrite` nao for usado, e os relatorios/Analytics passam a mostrar hits, parciais, bypass, duplicatas, orfaos e aprovados sem final.
+
 `batch_status` summarizes candidate queue health, preview availability, review counts, rendered exports, final review counts, the latest posting package, recent reports, and tracked failed downloads. Candidate preview downloads now retry with simple backoff, can clean `.part`/`.ytdl` files for selected videos, and write failures to `backend/app/storage/reports/failed_candidate_downloads.json`. `export_ready_to_post_package --package-name latest` writes a stable `posting_package/latest` folder, while `--clean-old` removes old package folders safely inside `backend/app/storage/posting_package`.
 
 ## ClipRadar 0.5.33 - Local Operations Dashboard + Job Runner API

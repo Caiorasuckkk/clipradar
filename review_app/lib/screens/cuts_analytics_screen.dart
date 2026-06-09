@@ -160,9 +160,35 @@ class _CacheCard extends StatelessWidget {
                 value: '${cache.cacheHitsLatestRun}',
               ),
               _ChipMetric(
+                label: 'parciais',
+                value: '${cache.cachePartialsLatestRun}',
+              ),
+              _ChipMetric(
+                label: 'bypass',
+                value: '${cache.cacheBypassedLatestRun}',
+              ),
+              _ChipMetric(
                 label: 'zero',
                 value: '${cache.videosProcessedFromScratchLatestRun}',
               ),
+              _ChipMetric(label: 'stale', value: '${cache.staleCount}'),
+              _ChipMetric(
+                label: 'dup cand.',
+                value: '${cache.duplicateCandidatesDetectedLatestRun}',
+              ),
+              _ChipMetric(
+                label: 'dup posts',
+                value: '${cache.duplicatePostsDetected}',
+              ),
+              _ChipMetric(
+                label: 'aprov. sem final',
+                value: '${cache.approvedMissingFinals}',
+              ),
+              _ChipMetric(
+                label: 'finais órfãos',
+                value: '${cache.orphanFinals}',
+              ),
+              _ChipMetric(label: 'posts órfãos', value: '${cache.orphanPosts}'),
             ],
           ),
           const SizedBox(height: 12),
