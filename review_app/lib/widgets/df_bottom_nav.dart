@@ -22,12 +22,8 @@ class DFBottomNav extends StatelessWidget {
       destinations: const [
         NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Início'),
         NavigationDestination(
-          icon: Icon(Icons.swipe_rounded),
-          label: 'Avaliar',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.publish_rounded),
-          label: 'Posts',
+          icon: Icon(Icons.movie_filter_rounded),
+          label: 'Cortes',
         ),
         NavigationDestination(
           icon: Icon(Icons.more_horiz_rounded),

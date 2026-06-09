@@ -19,6 +19,7 @@ class DfStatusChip extends StatelessWidget {
       'needs_adjustment' ||
       'needs_edit' ||
       'scheduled' ||
+      'success_with_warnings' ||
       'running' => AppColors.warning,
       _ => AppColors.cyan,
     };

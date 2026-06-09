@@ -14,8 +14,12 @@ import '../widgets/df_status_chip.dart';
 
 enum PostFilter { notPosted, posted, scheduled, doNotPost, all }
 
+enum PostSort { recent, score }
+
 class PostsScreen extends StatefulWidget {
-  const PostsScreen({super.key});
+  const PostsScreen({super.key, this.embedded = false});
+
+  final bool embedded;
 
   @override
   State<PostsScreen> createState() => _PostsScreenState();
@@ -31,6 +35,7 @@ class _PostsScreenState extends State<PostsScreen> {
   List<PostItem> _posts = [];
   PostItem? _selected;
   PostFilter _filter = PostFilter.notPosted;
+  PostSort _sort = PostSort.recent;
   bool _loading = true;
   bool _saving = false;
   final Set<String> _platforms = {};
@@ -57,8 +62,10 @@ class _PostsScreenState extends State<PostsScreen> {
     try {
       final summary = await _api.fetchPostsSummary();
       final generationStatus = await _api.fetchApprovedGenerationStatus();
-      final posts = await _api.fetchPosts(status: _statusQuery(_filter));
-      final selected = focus ?? (posts.isEmpty ? null : posts.first);
+      final posts = _sortPosts(
+        await _api.fetchPosts(status: _statusQuery(_filter)),
+      );
+      final selected = _selectedFromPosts(posts, focus);
       if (!mounted) return;
       setState(() {
         _summary = summary;
@@ -88,6 +95,37 @@ class _PostsScreenState extends State<PostsScreen> {
   Future<void> _changeFilter(PostFilter filter) async {
     setState(() => _filter = filter);
     await _load();
+  }
+
+  Future<void> _changeSort(PostSort sort) async {
+    setState(() => _sort = sort);
+    await _load(focus: _selected);
+  }
+
+  List<PostItem> _sortPosts(List<PostItem> posts) {
+    final sorted = List<PostItem>.from(posts);
+    if (_sort == PostSort.score) {
+      sorted.sort(
+        (a, b) =>
+            (b.finalReviewRating ?? -1).compareTo(a.finalReviewRating ?? -1),
+      );
+      return sorted;
+    }
+    sorted.sort((a, b) {
+      final postedCompare = b.postedAt.compareTo(a.postedAt);
+      if (postedCompare != 0) return postedCompare;
+      return b.postId.compareTo(a.postId);
+    });
+    return sorted;
+  }
+
+  PostItem? _selectedFromPosts(List<PostItem> posts, PostItem? focus) {
+    if (posts.isEmpty) return null;
+    if (focus == null) return posts.first;
+    for (final post in posts) {
+      if (post.postId == focus.postId) return post;
+    }
+    return posts.first;
   }
 
   Future<void> _save(String status) async {
@@ -132,7 +170,9 @@ class _PostsScreenState extends State<PostsScreen> {
         .toList();
     if (candidates.isEmpty) return;
     final current = _selected;
-    final index = current == null ? -1 : candidates.indexOf(current);
+    final index = current == null
+        ? -1
+        : candidates.indexWhere((post) => post.postId == current.postId);
     final next = candidates[(index + 1) % candidates.length];
     _select(next);
   }
@@ -157,88 +197,114 @@ class _PostsScreenState extends State<PostsScreen> {
     );
   }
 
+  Future<void> _showVideo(PostItem post) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.black,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => _PostVideoSheet(
+        title: post.suggestedTitle,
+        url: _api.postingPackageVideoUrl(post.packageVideoFilename),
+      ),
+    );
+  }
+
+  Future<void> _showDetails(PostItem post) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => _PostDetailsSheet(post: post),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final post = _selected;
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: [
-            _PostsHeader(
-              summary: _summary,
-              generationStatus: _generationStatus,
-              filter: _filter,
-              onFilterChanged: _changeFilter,
-              onRefresh: () => _load(focus: _selected),
-            ),
-            Expanded(
-              child: _loading
-                  ? const DfLoadingState(message: 'Carregando posts...')
-                  : RefreshIndicator(
-                      onRefresh: _load,
-                      child: ListView(
-                        padding: const EdgeInsets.all(14),
-                        children: [
-                          if (_error != null) _InlineError(message: _error!),
-                          if (_generationStatus?.running == true ||
-                              (_generationStatus?.pendingCount ?? 0) > 0)
-                            const _GenerationBanner(),
-                          if (_generationStatus?.running == true ||
-                              (_generationStatus?.pendingCount ?? 0) > 0)
-                            const SizedBox(height: 12),
-                          if (_posts.isNotEmpty)
-                            _PostPicker(
-                              posts: _posts,
-                              selected: post,
-                              onSelect: _select,
-                            ),
-                          const SizedBox(height: 12),
-                          if (post == null)
-                            const DfEmptyState(
-                              icon: Icons.publish_rounded,
-                              title: 'Nenhum post',
-                              message:
-                                  'Gere metadados em Operações ou troque o filtro.',
-                            )
-                          else ...[
-                            ClipVideoPlayer(
-                              url: _api.postingPackageVideoUrl(
-                                post.packageVideoFilename,
-                              ),
-                              aspectRatio: 9 / 16,
-                            ),
-                            const SizedBox(height: 12),
-                            _PostInfoCard(post: post),
-                            const SizedBox(height: 12),
-                            _CopyCard(post: post, onCopy: _copy),
-                            const SizedBox(height: 12),
-                            _PlatformSelector(
-                              selected: _platforms,
-                              onChanged: () => setState(() {}),
-                            ),
-                            const SizedBox(height: 12),
-                            _PostFields(
-                              notesController: _notesController,
-                              urlController: _urlController,
-                            ),
-                            const SizedBox(height: 12),
-                            _PostActions(
-                              saving: _saving,
-                              onPosted: () => _save('posted'),
-                              onScheduled: () => _save('scheduled'),
-                              onNotPosted: () => _save('not_posted'),
-                              onDoNotPost: () => _save('do_not_post'),
-                              onNext: _nextNotPosted,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-            ),
-          ],
+    final content = Column(
+      children: [
+        _PostsHeader(
+          summary: _summary,
+          generationStatus: _generationStatus,
+          filter: _filter,
+          onFilterChanged: _changeFilter,
+          sort: _sort,
+          onSortChanged: _changeSort,
+          onRefresh: () => _load(focus: _selected),
         ),
-      ),
+        Expanded(
+          child: _loading
+              ? const DfLoadingState(message: 'Carregando posts...')
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView(
+                    padding: const EdgeInsets.all(14),
+                    children: [
+                      if (_error != null) _InlineError(message: _error!),
+                      if (_generationStatus?.running == true ||
+                          (_generationStatus?.pendingCount ?? 0) > 0)
+                        const _GenerationBanner(),
+                      if (_generationStatus?.running == true ||
+                          (_generationStatus?.pendingCount ?? 0) > 0)
+                        const SizedBox(height: 12),
+                      if (_posts.isNotEmpty)
+                        _PostPicker(
+                          posts: _posts,
+                          selected: post,
+                          onSelect: _select,
+                        ),
+                      const SizedBox(height: 12),
+                      if (post == null)
+                        const DfEmptyState(
+                          icon: Icons.publish_rounded,
+                          title: 'Nenhum post',
+                          message:
+                              'Gere metadados em Operações ou troque o filtro.',
+                        )
+                      else ...[
+                        _PostVideoCard(
+                          post: post,
+                          onOpenVideo: () => _showVideo(post),
+                        ),
+                        const SizedBox(height: 12),
+                        _PostInfoCard(
+                          post: post,
+                          onOpenDetails: () => _showDetails(post),
+                        ),
+                        const SizedBox(height: 12),
+                        _CopyCard(post: post, onCopy: _copy),
+                        const SizedBox(height: 12),
+                        _PlatformSelector(
+                          selected: _platforms,
+                          onChanged: () => setState(() {}),
+                        ),
+                        const SizedBox(height: 12),
+                        _PostFields(
+                          notesController: _notesController,
+                          urlController: _urlController,
+                        ),
+                        const SizedBox(height: 12),
+                        _PostActions(
+                          saving: _saving,
+                          onPosted: () => _save('posted'),
+                          onScheduled: () => _save('scheduled'),
+                          onNotPosted: () => _save('not_posted'),
+                          onDoNotPost: () => _save('do_not_post'),
+                          onNext: _nextNotPosted,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+        ),
+      ],
     );
+    if (widget.embedded) {
+      return content;
+    }
+    return Scaffold(body: SafeArea(child: content));
   }
 }
 
@@ -248,6 +314,8 @@ class _PostsHeader extends StatelessWidget {
     required this.generationStatus,
     required this.filter,
     required this.onFilterChanged,
+    required this.sort,
+    required this.onSortChanged,
     required this.onRefresh,
   });
 
@@ -255,6 +323,8 @@ class _PostsHeader extends StatelessWidget {
   final ApprovedGenerationStatus? generationStatus;
   final PostFilter filter;
   final ValueChanged<PostFilter> onFilterChanged;
+  final PostSort sort;
+  final ValueChanged<PostSort> onSortChanged;
   final VoidCallback onRefresh;
 
   @override
@@ -297,23 +367,37 @@ class _PostsHeader extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             child: SegmentedButton<PostFilter>(
               segments: const [
+                ButtonSegment(value: PostFilter.all, label: Text('Todos')),
                 ButtonSegment(
                   value: PostFilter.notPosted,
-                  label: Text('Novos'),
+                  label: Text('Não postados'),
                 ),
                 ButtonSegment(
                   value: PostFilter.posted,
                   label: Text('Postados'),
                 ),
                 ButtonSegment(
-                  value: PostFilter.scheduled,
-                  label: Text('Agenda'),
+                  value: PostFilter.doNotPost,
+                  label: Text('Não postar'),
                 ),
-                ButtonSegment(value: PostFilter.doNotPost, label: Text('Não')),
-                ButtonSegment(value: PostFilter.all, label: Text('Todos')),
               ],
               selected: {filter},
               onSelectionChanged: (value) => onFilterChanged(value.first),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<PostSort>(
+              segments: const [
+                ButtonSegment(value: PostSort.recent, label: Text('Recentes')),
+                ButtonSegment(
+                  value: PostSort.score,
+                  label: Text('Melhor score'),
+                ),
+              ],
+              selected: {sort},
+              onSelectionChanged: (value) => onSortChanged(value.first),
             ),
           ),
         ],
@@ -399,7 +483,7 @@ class _PostPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 138,
+      height: 162,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: posts.length,
@@ -408,6 +492,7 @@ class _PostPicker extends StatelessWidget {
           final post = posts[index];
           final active = post.postId == selected?.postId;
           return SizedBox(
+            key: ValueKey(post.postId),
             width: 276,
             child: InkWell(
               onTap: () => onSelect(post),
@@ -425,7 +510,7 @@ class _PostPicker extends StatelessWidget {
                   children: [
                     Container(
                       width: 58,
-                      height: 96,
+                      height: 104,
                       decoration: BoxDecoration(
                         color: Colors.black,
                         borderRadius: BorderRadius.circular(12),
@@ -456,12 +541,15 @@ class _PostPicker extends StatelessWidget {
                             style: AppTextStyles.muted,
                           ),
                           const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: DfStatusChip(
-                              label: post.postedStatus,
-                              status: post.postedStatus,
-                            ),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              DfStatusChip(
+                                label: post.postedStatus,
+                                status: post.postedStatus,
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -477,10 +565,118 @@ class _PostPicker extends StatelessWidget {
   }
 }
 
-class _PostInfoCard extends StatelessWidget {
-  const _PostInfoCard({required this.post});
+class _PostVideoCard extends StatelessWidget {
+  const _PostVideoCard({required this.post, required this.onOpenVideo});
 
   final PostItem post;
+  final VoidCallback onOpenVideo;
+
+  @override
+  Widget build(BuildContext context) {
+    return DfCard(
+      child: Row(
+        children: [
+          Container(
+            width: 64,
+            height: 96,
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: const Icon(Icons.play_arrow_rounded, color: AppColors.cyan),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  post.suggestedTitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  post.packageVideoFilename,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.muted,
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: onOpenVideo,
+                      icon: const Icon(Icons.play_circle_rounded),
+                      label: const Text('Ver vídeo'),
+                    ),
+                    DfStatusChip(
+                      label: post.postedStatus,
+                      status: post.postedStatus,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PostVideoSheet extends StatelessWidget {
+  const _PostVideoSheet({required this.title, required this.url});
+
+  final String title;
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title.isEmpty ? 'Preview do post' : title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipVideoPlayer(url: url, aspectRatio: 9 / 16),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PostInfoCard extends StatelessWidget {
+  const _PostInfoCard({required this.post, required this.onOpenDetails});
+
+  final PostItem post;
+  final VoidCallback onOpenDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -499,10 +695,15 @@ class _PostInfoCard extends StatelessWidget {
           const SizedBox(height: 10),
           _Info('post_id', post.postId),
           _Info('arquivo', post.packageVideoFilename),
-          _Info('status', post.postedStatus),
           _Info(
             'review',
             '${post.finalReviewRating ?? '-'} / ${post.finalReviewReason}',
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onOpenDetails,
+            icon: const Icon(Icons.info_outline_rounded),
+            label: const Text('Ver detalhes'),
           ),
         ],
       ),
@@ -562,7 +763,11 @@ class _CopyRow extends StatelessWidget {
                 style: const TextStyle(color: Color(0xFF8C93A6), fontSize: 12),
               ),
               const SizedBox(height: 3),
-              Text(text.isEmpty ? '-' : text),
+              Text(
+                text.isEmpty ? '-' : text,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
             ],
           ),
         ),
@@ -587,6 +792,7 @@ class _PlatformSelector extends StatelessWidget {
     return DfCard(
       child: Wrap(
         spacing: 8,
+        runSpacing: 8,
         children: platforms.map((platform) {
           return FilterChip(
             selected: selected.contains(platform),
@@ -696,6 +902,90 @@ class _PostActions extends StatelessWidget {
           label: const Text('Próximo não postado'),
         ),
       ],
+    );
+  }
+}
+
+class _PostDetailsSheet extends StatelessWidget {
+  const _PostDetailsSheet({required this.post});
+
+  final PostItem post;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                post.suggestedTitle.isEmpty
+                    ? 'Detalhes do post'
+                    : post.suggestedTitle,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 14),
+              _Info('post_id', post.postId),
+              _Info('final_clip_id', post.finalClipId),
+              _Info('clip_id', post.clipId),
+              _Info('video_id', post.videoId),
+              _Info('arquivo', post.packageVideoFilename),
+              _Info('status', post.postedStatus),
+              _Info('posted_at', post.postedAt),
+              _Info('plataformas', post.postedPlatforms.join(', ')),
+              _Info(
+                'review',
+                '${post.finalReviewRating ?? '-'} / ${post.finalReviewReason}',
+              ),
+              if (post.videoTitle.isNotEmpty)
+                _Info('video_title', post.videoTitle),
+              if (post.originalYoutubeUrl.isNotEmpty)
+                _Info('youtube', post.originalYoutubeUrl),
+              const SizedBox(height: 12),
+              const Text(
+                'Descrição',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                post.suggestedDescription.isEmpty
+                    ? '-'
+                    : post.suggestedDescription,
+                style: AppTextStyles.muted,
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Hashtags',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 6),
+              Text(post.hashtagsText.isEmpty ? '-' : post.hashtagsText),
+              if (post.finalReviewNotes.isNotEmpty ||
+                  post.notes.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Notas',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  [
+                    post.finalReviewNotes,
+                    post.notes,
+                  ].where((value) => value.trim().isNotEmpty).join('\n\n'),
+                  style: AppTextStyles.muted,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

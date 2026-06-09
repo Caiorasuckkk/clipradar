@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -181,6 +182,12 @@ class ClipAnalyzerService:
         self._apply_source_quality_decision(thought_units, source_quality)
         selected = self._select_thought_units(thought_units, source_quality)
         diagnostics = self._select_diagnostic_units(thought_units, selected)
+        generation_summary = self._candidate_generation_summary(
+            thought_units,
+            selected,
+            diagnostics,
+            source_quality,
+        )
 
         clips = [
             self._format_clip(unit, rank, video_metadata, rejected_by_analyzer=False)
@@ -209,6 +216,7 @@ class ClipAnalyzerService:
                 "recommended_count": len(clips),
                 "diagnostic_count": len(diagnostic_candidates),
                 "reason": reason,
+                **generation_summary,
                 **source_quality,
             },
             **source_quality,
@@ -354,9 +362,55 @@ class ClipAnalyzerService:
             ):
                 continue
             diagnostics.append(candidate)
-            if len(diagnostics) >= self.DIAGNOSTIC_TOP_N:
+            if not _no_candidate_limit_enabled() and len(diagnostics) >= self.DIAGNOSTIC_TOP_N:
                 break
         return diagnostics
+
+    def _candidate_generation_summary(
+        self,
+        units: list[dict[str, Any]],
+        selected: list[dict[str, Any]],
+        diagnostics: list[dict[str, Any]],
+        source_quality: dict[str, Any],
+    ) -> dict[str, Any]:
+        no_limit = _no_candidate_limit_enabled()
+        recommended = [unit for unit in units if unit.get("recommended_version")]
+        viable_duration = [unit for unit in units if unit.get("duration", 0) >= self.SHORT_MIN_SECONDS]
+        weak_ranking = [unit for unit in units if unit.get("ranking_quality_tier") == "weak"]
+        blocked_non_content = [
+            unit
+            for unit in units
+            if unit.get("is_sponsor_segment")
+            or unit.get("rejected_content_reason")
+            or unit.get("non_content_score", 0) >= 6
+        ]
+        source_tier = str(source_quality.get("source_quality_tier", "review_source"))
+        artificial_limit = self._selection_limit_for_source(source_tier, units)
+        selected_limit: int | str = "unlimited" if no_limit else artificial_limit
+        dropped_by_limit = 0
+        if not no_limit:
+            eligible_recommended = [
+                unit
+                for unit in recommended
+                if not unit.get("duplicate_suppressed")
+                and unit.get("ranking_quality_tier") != "weak"
+                and unit.get("duration", 0) >= self.SHORT_MIN_SECONDS
+                and not unit.get("is_sponsor_segment")
+            ]
+            dropped_by_limit = max(0, len(eligible_recommended) - len(selected))
+        return {
+            "no_candidate_limit_enabled": no_limit,
+            "raw_thought_units_count": len(units),
+            "raw_viable_duration_count": len(viable_duration),
+            "recommended_version_count": len(recommended),
+            "selected_recommended_count": len(selected),
+            "diagnostic_pool_count": len(diagnostics),
+            "selection_limit_applied": selected_limit,
+            "candidates_dropped_by_selection_limit": dropped_by_limit,
+            "candidates_dropped_by_weak_ranking": len(weak_ranking),
+            "candidates_dropped_by_non_content": len(blocked_non_content),
+            "top_n_applied": None if no_limit else artificial_limit,
+        }
 
     def _build_thought_units(
         self,
@@ -1627,26 +1681,9 @@ class ClipAnalyzerService:
         )
         selected: list[dict[str, Any]] = []
         source_tier = str((source_quality or {}).get("source_quality_tier", "review_source"))
-        max_by_source = {
-            "bad_source": 0,
-            "weak_source": 1,
-            "review_source": 2,
-            "good_source": 3,
-            "excellent_source": 4,
-        }.get(source_tier, 3)
-        max_selected = min(3, max_by_source)
-        high_quality_count = sum(
-            1
-            for candidate in candidates
-            if candidate["recommended_version"]
-            and candidate["ranking_quality_tier"] in {"excellent", "good"}
-            and candidate["ranking_quality_score"] >= 7.2
-            and not candidate["duplicate_suppressed"]
-            and candidate["engagement_risk_score"] < 7
-            and candidate["boring_or_confusing_score"] < 7
-        )
-        if source_tier == "excellent_source" and high_quality_count >= 4:
-            max_selected = 4
+        max_selected = self._selection_limit_for_source(source_tier, candidates)
+        if _no_candidate_limit_enabled():
+            max_selected = max(50, len(candidates))
         if max_selected <= 0:
             return []
         for candidate in candidates:
@@ -1708,6 +1745,29 @@ class ClipAnalyzerService:
             if len(selected) >= max_selected:
                 break
         return selected
+
+    def _selection_limit_for_source(self, source_tier: str, candidates: list[dict[str, Any]]) -> int:
+        max_by_source = {
+            "bad_source": 0,
+            "weak_source": 1,
+            "review_source": 2,
+            "good_source": 3,
+            "excellent_source": 4,
+        }.get(source_tier, 3)
+        max_selected = min(3, max_by_source)
+        high_quality_count = sum(
+            1
+            for candidate in candidates
+            if candidate["recommended_version"]
+            and candidate["ranking_quality_tier"] in {"excellent", "good"}
+            and candidate["ranking_quality_score"] >= 7.2
+            and not candidate["duplicate_suppressed"]
+            and candidate["engagement_risk_score"] < 7
+            and candidate["boring_or_confusing_score"] < 7
+        )
+        if source_tier == "excellent_source" and high_quality_count >= 4:
+            max_selected = 4
+        return max_selected
 
     def _expand_start_for_context(self, segments: list[dict[str, Any]], start_index: int) -> int:
         text = str(segments[start_index].get("text", ""))
@@ -2413,3 +2473,12 @@ class ClipAnalyzerService:
     @staticmethod
     def _best_hook_start(left: dict[str, Any], right: dict[str, Any]) -> float:
         return left["start"] if left.get("hook_score", 0) >= right.get("hook_score", 0) else right["start"]
+
+
+def _no_candidate_limit_enabled() -> bool:
+    return os.getenv("CLIPRADAR_NO_CANDIDATE_LIMIT", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "sim",
+    }

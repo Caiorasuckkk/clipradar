@@ -6,10 +6,18 @@ class ClipVideoPlayer extends StatefulWidget {
     super.key,
     required this.url,
     this.aspectRatio = 16 / 9,
+    this.playbackSpeed = 1.0,
   });
 
   final String url;
   final double aspectRatio;
+  final double? playbackSpeed;
+
+  double get safePlaybackSpeed {
+    final speed = playbackSpeed;
+    if (speed == null || !speed.isFinite || speed <= 0) return 1.0;
+    return speed;
+  }
 
   @override
   State<ClipVideoPlayer> createState() => _ClipVideoPlayerState();
@@ -30,6 +38,8 @@ class _ClipVideoPlayerState extends State<ClipVideoPlayer> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url) {
       _load();
+    } else if (oldWidget.safePlaybackSpeed != widget.safePlaybackSpeed) {
+      _controller?.setPlaybackSpeed(widget.safePlaybackSpeed);
     }
   }
 
@@ -45,6 +55,7 @@ class _ClipVideoPlayerState extends State<ClipVideoPlayer> {
       );
       await controller.initialize();
       controller.setLooping(true);
+      await controller.setPlaybackSpeed(widget.safePlaybackSpeed);
       if (!mounted) {
         await controller.dispose();
         return;
@@ -99,7 +110,7 @@ class _ClipVideoPlayerState extends State<ClipVideoPlayer> {
               )
             else
               FittedBox(
-                fit: BoxFit.cover,
+                fit: BoxFit.contain,
                 child: SizedBox(
                   width: controller.value.size.width,
                   height: controller.value.size.height,

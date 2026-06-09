@@ -50,16 +50,46 @@ def main() -> None:
     rejected = 0
 
     videos_to_process = queued if manual_ids else queued[: config.MAX_VIDEOS_PER_RUN]
-    for video in videos_to_process:
+    total_videos = len(videos_to_process)
+    for index, video in enumerate(videos_to_process, start=1):
         video_id = video["video_id"]
         title = video.get("title", "")
+        video_started = time.perf_counter()
+        print(
+            f"[step3_video_start] video_id={video_id} index={index}/{total_videos} "
+            f"title={_display(title, 120)}",
+            flush=True,
+        )
         print(f"Processando [{video_id}]: {title}")
+        cached_output = config.STORAGE_CLIPS_DIR / f"{video_id}_clips.json"
+        if cached_output.exists() and not args.force:
+            history.mark_done(video_id)
+            processed += 1
+            print(
+                f"[step3_cache_hit] video_id={video_id} clips_path={cached_output}",
+                flush=True,
+            )
+            print(
+                f"[step3_video_end] video_id={video_id} status=CACHED "
+                f"elapsed_seconds={round(time.perf_counter() - video_started, 2)}",
+                flush=True,
+            )
+            continue
         history.mark_processing(video_id)
 
         try:
+            print(f"[step3_process_start] video_id={video_id}", flush=True)
             transcript = transcriber.load_transcript(video_id)
             if not transcript:
+                download_started = time.perf_counter()
+                print(f"[step3_download_start] video_id={video_id}", flush=True)
                 audio_path = downloader.download(video_id, video["url"])
+                print(
+                    f"[step3_download_end] video_id={video_id} "
+                    f"elapsed_seconds={round(time.perf_counter() - download_started, 2)} "
+                    f"success={bool(audio_path)}",
+                    flush=True,
+                )
                 if not audio_path:
                     history.mark_error(video_id, "download falhou")
                     errors += 1
@@ -74,6 +104,8 @@ def main() -> None:
 
                 transcriber.save_transcript(video_id, transcript)
                 downloader.cleanup(video_id)
+            else:
+                print(f"[step3_transcript_cache_hit] video_id={video_id}", flush=True)
 
             analysis = analyzer.analyze_with_diagnostics(transcript, video)
             clips = analysis["clips"]
@@ -121,10 +153,21 @@ def main() -> None:
             processed += 1
             total_clips += len(clips)
             print(f"✓ {len(clips)} clipes gerados: {video_id} — {output_path}")
+            print(
+                f"[step3_process_end] video_id={video_id} "
+                f"elapsed_seconds={round(time.perf_counter() - video_started, 2)}",
+                flush=True,
+            )
         except Exception as exc:
             history.mark_error(video_id, str(exc))
             errors += 1
             print(f"PROCESS falhou: {video_id} — {exc}")
+        finally:
+            print(
+                f"[step3_video_end] video_id={video_id} "
+                f"elapsed_seconds={round(time.perf_counter() - video_started, 2)}",
+                flush=True,
+            )
 
     elapsed = time.perf_counter() - started
     print_summary(processed, total_clips, errors, rejected, elapsed)

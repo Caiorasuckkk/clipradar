@@ -31,6 +31,9 @@ def main() -> None:
     parser.add_argument("--download-missing", action="store_true")
     parser.add_argument("--only-missing", action="store_true")
     parser.add_argument("--max-missing", type=int)
+    parser.add_argument("--max-previews-initial", type=int)
+    parser.add_argument("--max-previews-total", type=int)
+    parser.add_argument("--render-all-good-candidates", action="store_true")
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--clean-partials", action="store_true")
     parser.add_argument("--rerender-invalid", action="store_true")
@@ -58,8 +61,9 @@ def main() -> None:
             if _output_path_for_item(item).exists()
             and not validate_candidate_preview(_output_path_for_item(item), deep=True).valid
         ]
-    if args.max_missing is not None:
-        items = items[: max(0, args.max_missing)]
+    preview_cap = _preview_cap(args)
+    if preview_cap is not None:
+        items = items[: max(0, preview_cap)]
     if args.limit is not None:
         items = items[: max(0, args.limit)]
 
@@ -463,6 +467,16 @@ def _to_float(value: object) -> float:
         return float(value or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _preview_cap(args: argparse.Namespace) -> int | None:
+    if args.max_missing is not None:
+        return args.max_missing
+    if args.render_all_good_candidates:
+        return args.max_previews_total
+    if args.max_previews_initial is not None:
+        return args.max_previews_initial
+    return args.max_previews_total
 
 
 def configure_output() -> None:

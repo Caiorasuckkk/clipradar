@@ -599,6 +599,28 @@ GET  /generation/approved/status
 
 This does not publish, does not use OpenAI, does not use Whisper, and does not run the analyzer. The state file lives in `backend/app/storage/generation_state/approved_generation_state.json`.
 
+## ClipRadar 0.5.37 - Unlimited Quality-Based Candidates
+
+Candidate discovery can now run in quick or deep mode. Deep mode removes the fixed per-video candidate cap and keeps candidates by quality, duration, source score, and overlap dedupe. Preview rendering is progressive: `max_previews` controls only how many preview files are rendered now, not how many candidates are detected.
+
+Useful commands:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.pipeline_find_candidates --dry-run --max-videos 1 --no-candidate-limit
+.\.ven\Scripts\python.exe -m app.jobs.pipeline_find_candidates --max-videos 1 --no-candidate-limit --download-missing --overwrite
+.\.ven\Scripts\python.exe -m app.jobs.audit_candidates_by_video
+```
+
+Quality controls:
+
+```powershell
+.\.ven\Scripts\python.exe -m app.jobs.export_candidate_review_queue --include-diagnostics --overwrite --no-candidate-limit --min-ranking-score 6 --min-duration 25 --max-duration 120 --dedup-overlap 0.65
+.\.ven\Scripts\python.exe -m app.jobs.render_candidate_previews --only-missing --download-missing --overwrite --max-previews-initial 10
+.\.ven\Scripts\python.exe -m app.jobs.render_candidate_previews --only-missing --download-missing --overwrite --render-all-good-candidates --max-previews-total 50
+```
+
+Reports include `candidates_raw`, `candidates_after_quality_filter`, `candidates_after_dedup`, and `duplicates_removed`. The Android home screen exposes `Busca rápida` for small batches and `Busca profunda` for quality-based candidate expansion. This does not publish, does not use OpenAI, does not use Whisper, and does not run the subtitle pipeline.
+
 ## Reference Clip Benchmark
 
 ClipRadar keeps a small local benchmark of Shorts the user considers good editorial references:

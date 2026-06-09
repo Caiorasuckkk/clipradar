@@ -180,6 +180,11 @@ class ApiClient {
     );
   }
 
+  Future<void> cancelOpsJobRun(String runId) async {
+    final response = await _client.post(_uri('/ops/jobs/runs/$runId/cancel'));
+    _throwIfBad(response);
+  }
+
   Future<ApprovedGenerationStatus> fetchApprovedGenerationStatus() async {
     final response = await _client.get(_uri('/generation/approved/status'));
     _throwIfBad(response);
@@ -227,6 +232,14 @@ class ApiClient {
     required String jobKey,
     Map<String, dynamic> params = const {},
   }) async {
+    final result = await startOpsJobWithResult(jobKey: jobKey, params: params);
+    return result.run;
+  }
+
+  Future<OpsJobStartResult> startOpsJobWithResult({
+    required String jobKey,
+    Map<String, dynamic> params = const {},
+  }) async {
     final response = await _client.post(
       _uri('/ops/jobs/run'),
       headers: {'Content-Type': 'application/json'},
@@ -234,13 +247,26 @@ class ApiClient {
     );
     _throwIfBad(response);
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
-    return fetchOpsJobRun(payload['run_id'].toString());
+    final run = await fetchOpsJobRun(payload['run_id'].toString());
+    return OpsJobStartResult(
+      run: run,
+      alreadyRunning: payload['status']?.toString() == 'already_running',
+      message: payload['message']?.toString() ?? '',
+    );
   }
 
   Future<JobRun> fetchOpsJobRun(String runId) async {
     final response = await _client.get(_uri('/ops/jobs/runs/$runId'));
     _throwIfBad(response);
     return JobRun.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<JobRunLogs> fetchOpsJobRunLogs(String runId) async {
+    final response = await _client.get(_uri('/ops/jobs/runs/$runId/logs'));
+    _throwIfBad(response);
+    return JobRunLogs.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<JobRun> fetchLatestOpsRun() async {
@@ -257,6 +283,24 @@ class ApiClient {
         stderrTail: '',
         exitCode: null,
         elapsedSeconds: null,
+        pid: null,
+        startedAt: '',
+        command: [],
+        latestError: '',
+        warningMessage: '',
+        candidateCount: 0,
+        previewReady: 0,
+        missingPreview: 0,
+        pendingReviewableCount: 0,
+        nextAction: '',
+        partialReviewable: false,
+        partialCandidateCount: 0,
+        partialPreviewReady: 0,
+        partialPendingReviewableCount: 0,
+        currentVideoId: '',
+        currentVideoIndex: null,
+        totalVideos: null,
+        currentStepDetail: '',
       );
     }
     return JobRun.fromJson(runs.first as Map<String, dynamic>);
@@ -304,7 +348,65 @@ class ApiClient {
 
   void _throwIfBad(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) return;
-    throw ApiException('HTTP ${response.statusCode}: ${response.body}');
+    throw ApiException(
+      'HTTP ${response.statusCode}: ${response.body}',
+      statusCode: response.statusCode,
+      body: response.body,
+    );
+  }
+}
+
+class OpsJobStartResult {
+  const OpsJobStartResult({
+    required this.run,
+    required this.alreadyRunning,
+    required this.message,
+  });
+
+  final JobRun run;
+  final bool alreadyRunning;
+  final String message;
+}
+
+class JobRunLogs {
+  const JobRunLogs({
+    required this.runId,
+    required this.jobKey,
+    required this.status,
+    required this.pid,
+    required this.startedAt,
+    required this.elapsedSeconds,
+    required this.command,
+    required this.stdoutTail,
+    required this.stderrTail,
+  });
+
+  final String runId;
+  final String jobKey;
+  final String status;
+  final int? pid;
+  final String startedAt;
+  final num? elapsedSeconds;
+  final List<String> command;
+  final String stdoutTail;
+  final String stderrTail;
+
+  factory JobRunLogs.fromJson(Map<String, dynamic> json) {
+    return JobRunLogs(
+      runId: json['run_id']?.toString() ?? '',
+      jobKey: json['job_key']?.toString() ?? '',
+      status: json['status']?.toString() ?? '',
+      pid: _intValueOrNull(json['pid']),
+      startedAt: json['started_at']?.toString() ?? '',
+      elapsedSeconds: json['elapsed_seconds'] is num
+          ? json['elapsed_seconds'] as num
+          : num.tryParse(json['elapsed_seconds']?.toString() ?? ''),
+      command: (json['command'] as List<dynamic>? ?? [])
+          .map((item) => item.toString())
+          .toList(),
+      stdoutTail: json['stdout_tail']?.toString() ?? '',
+      stderrTail: json['stderr_tail']?.toString() ?? '',
+    );
   }
 }
 
@@ -360,10 +462,18 @@ int _intValue(Object? value) {
   return int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
+int? _intValueOrNull(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '');
+}
+
 class ApiException implements Exception {
-  ApiException(this.message);
+  ApiException(this.message, {this.statusCode, this.body = ''});
 
   final String message;
+  final int? statusCode;
+  final String body;
 
   @override
   String toString() => message;

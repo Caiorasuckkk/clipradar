@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
+import '../core/search_presets.dart';
 import '../models/job_run.dart';
 import '../models/ops_status.dart';
 import '../theme/app_colors.dart';
@@ -163,7 +164,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
                   child: FilledButton.icon(
                     onPressed: widget.onOpenCandidates,
                     icon: const Icon(Icons.play_circle_fill_rounded),
-                    label: const Text('Avaliar candidatos agora'),
+                    label: const Text('Avaliar cortes agora'),
                   ),
                 ),
               ],
@@ -194,7 +195,8 @@ class _OperationsScreenState extends State<OperationsScreen> {
 
   bool _canReviewCandidates(JobRun? run) {
     final status = _status;
-    return run?.status == 'success' &&
+    return (run?.status == 'success' ||
+            run?.status == 'success_with_warnings') &&
         status != null &&
         status.previewReady > 0 &&
         status.candidateReviewsPending > 0;
@@ -302,14 +304,14 @@ class _QuickFlow extends StatelessWidget {
       _FlowCardData(
         icon: Icons.manage_search_rounded,
         title: 'Encontrar vídeos',
-        description: 'Busca vídeos e prepara candidatos para revisão.',
+        description: 'Busca vídeos e prepara cortes para revisão.',
         label: 'Começar',
         action: () => onRun(_findVideosAction),
         jobKey: _findVideosAction.jobKey,
       ),
       _FlowCardData(
         icon: Icons.play_circle_fill_rounded,
-        title: 'Avaliar candidatos',
+        title: 'Avaliar cortes',
         description: 'Revise os cortes sugeridos.',
         label: 'Abrir',
         action: onOpenCandidates,
@@ -346,7 +348,7 @@ class _QuickFlow extends StatelessWidget {
                 width: width,
                 child: _FlowActionCard(
                   data: card,
-                  disabled: disabled && card.title != 'Avaliar candidatos',
+                  disabled: disabled && card.title != 'Avaliar cortes',
                   busy: starting && runningJobKey == card.jobKey,
                 ),
               ),
@@ -430,7 +432,7 @@ class _StatusGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
-      ('Candidates', status?.totalCandidates ?? 0),
+      ('Cortes', status?.totalCandidates ?? 0),
       ('Previews ok', status?.previewReady ?? 0),
       ('Previews falta', status?.missingPreview ?? 0),
       ('Cand. pend.', status?.candidateReviewsPending ?? 0),
@@ -745,7 +747,7 @@ String _packageName(String path) {
 
 String _workflowStage(String stdout) {
   if (stdout.contains('Step 5/5')) return 'Renderizando previews...';
-  if (stdout.contains('Step 4/5')) return 'Gerando candidatos...';
+  if (stdout.contains('Step 4/5')) return 'Gerando cortes...';
   if (stdout.contains('Step 3/5')) return 'Processando vídeos...';
   if (stdout.contains('Step 2/5')) return 'Selecionando melhores...';
   if (stdout.contains('Step 1/5')) return 'Buscando vídeos...';
@@ -756,13 +758,7 @@ const _findVideosAction = _OpAction(
   label: 'Encontrar vídeos',
   jobKey: 'find_videos_flow',
   icon: Icons.manage_search_rounded,
-  params: {
-    'max_videos': 3,
-    'max_previews': 10,
-    'include_diagnostics': false,
-    'download_missing': true,
-    'overwrite': true,
-  },
+  params: quickSearchParams,
 );
 
 const _quickActions = [
@@ -816,7 +812,7 @@ const _actionGroups = [
     ],
   ),
   _OpGroup(
-    title: 'Candidates',
+    title: 'Cortes',
     actions: [
       _OpAction(
         label: 'Gerar fila',

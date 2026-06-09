@@ -20,11 +20,19 @@ def main() -> None:
     parser.add_argument("--include-diagnostics", action="store_true")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--no-candidate-limit", action="store_true")
+    parser.add_argument("--max-candidates-per-video")
+    parser.add_argument("--min-ranking-score", type=float, default=6.0)
+    parser.add_argument("--min-source-score", type=float, default=0.0)
+    parser.add_argument("--min-duration", type=float, default=25.0)
+    parser.add_argument("--max-duration", type=float, default=120.0)
+    parser.add_argument("--quality-threshold", type=float, default=6.0)
+    parser.add_argument("--dedup-overlap", type=float, default=0.65)
     args = parser.parse_args()
 
     video_ids = _video_ids(args.video_id)
     reviews = load_candidate_reviews()
-    items: list[dict[str, Any]] = []
+    raw_items: list[dict[str, Any]] = []
     for path in sorted(config.STORAGE_CLIPS_DIR.glob("*_clips.json")):
         payload = _load_json(path)
         if not isinstance(payload, dict):
@@ -32,19 +40,43 @@ def main() -> None:
         video_id = str(payload.get("video_id") or path.name.replace("_clips.json", ""))
         if video_ids and video_id not in video_ids:
             continue
-        items.extend(_items_from_payload(payload, video_id, "clips", reviews))
+        raw_items.extend(_items_from_payload(payload, video_id, "clips", reviews))
         if args.include_diagnostics:
-            items.extend(_items_from_payload(payload, video_id, "diagnostic_candidates", reviews))
+            raw_items.extend(_items_from_payload(payload, video_id, "diagnostic_candidates", reviews))
 
+    filtered_items = _quality_filter_items(
+        raw_items,
+        min_ranking_score=args.min_ranking_score,
+        min_source_score=args.min_source_score,
+        min_duration=args.min_duration,
+        max_duration=args.max_duration,
+        quality_threshold=args.quality_threshold,
+    )
+    deduped_items, duplicates_removed = _dedupe_items(filtered_items, args.dedup_overlap)
+    items = _limit_per_video(
+        deduped_items,
+        max_candidates_per_video=args.max_candidates_per_video,
+        no_candidate_limit=args.no_candidate_limit,
+    )
     if args.limit is not None:
         items = items[: max(0, args.limit)]
+    stats_by_video = _stats_by_video(
+        raw_items,
+        filtered_items,
+        deduped_items,
+        items,
+        no_candidate_limit=args.no_candidate_limit,
+    )
 
     config.STORAGE_CANDIDATE_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
-    if QUEUE_PATH.exists() and not args.overwrite:
-        print("EXPORT CANDIDATE REVIEW QUEUE")
-        print(f"Queue já existe: {QUEUE_PATH}")
-        print("Use --overwrite para recriar.")
-        return
+    existing_payload = _load_json(QUEUE_PATH) if QUEUE_PATH.exists() and not args.overwrite else {}
+    existing_items = (
+        existing_payload.get("items", [])
+        if isinstance(existing_payload, dict) and isinstance(existing_payload.get("items"), list)
+        else []
+    )
+    if existing_items and not args.overwrite:
+        items = _merge_existing_items(existing_items, items)
 
     exported_at = datetime.utcnow().isoformat()
     payload = {
@@ -52,7 +84,25 @@ def main() -> None:
         "exported_at": exported_at,
         "video_id_filter": args.video_id,
         "include_diagnostics": bool(args.include_diagnostics),
+        "no_candidate_limit": bool(args.no_candidate_limit),
+        "max_candidates_per_video": args.max_candidates_per_video,
+        "min_ranking_score": args.min_ranking_score,
+        "min_source_score": args.min_source_score,
+        "min_duration": args.min_duration,
+        "max_duration": args.max_duration,
+        "quality_threshold": args.quality_threshold,
+        "dedup_overlap": args.dedup_overlap,
+        "candidates_raw": len(raw_items),
+        "candidates_after_quality_filter": len(filtered_items),
+        "candidates_after_dedup": len(deduped_items),
+        "duplicates_removed": duplicates_removed,
+        "candidates_dropped_by_quality": max(0, len(raw_items) - len(filtered_items)),
+        "candidates_dropped_by_dedupe": duplicates_removed,
+        "candidates_dropped_by_limit": max(0, len(deduped_items) - len(items)),
         "items_count": len(items),
+        "merged_existing": bool(existing_items and not args.overwrite),
+        "existing_items_count": len(existing_items),
+        "stats_by_video": stats_by_video,
         "items": items,
     }
     _write_json(QUEUE_PATH, payload)
@@ -65,7 +115,16 @@ def main() -> None:
     md_path.write_text(_markdown_report(payload), encoding="utf-8")
 
     print("EXPORT CANDIDATE REVIEW QUEUE")
+    print(f"candidates_raw: {len(raw_items)}")
+    print(f"candidates_after_quality_filter: {len(filtered_items)}")
+    print(f"candidates_after_dedup: {len(deduped_items)}")
+    print(f"duplicates_removed: {duplicates_removed}")
+    print(f"candidates_dropped_by_quality: {max(0, len(raw_items) - len(filtered_items))}")
+    print(f"candidates_dropped_by_dedupe: {duplicates_removed}")
+    print(f"candidates_dropped_by_limit: {max(0, len(deduped_items) - len(items))}")
     print(f"candidates: {len(items)}")
+    print(f"merged_existing: {bool(existing_items and not args.overwrite)}")
+    print(f"existing_items_count: {len(existing_items)}")
     print(f"queue: {QUEUE_PATH}")
     print(f"JSON: {json_path}")
     print(f"Markdown: {md_path}")
@@ -105,15 +164,178 @@ def _items_from_payload(
                 "reason": clip.get("review_reason") or clip.get("reason") or clip.get("selected_boundary_reason") or "",
                 "ranking_quality_score": clip.get("ranking_quality_score") or clip.get("score"),
                 "ranking_quality_tier": clip.get("ranking_quality_tier"),
+                "score": clip.get("score") or clip.get("ranking_quality_score"),
+                "text": clip.get("text", ""),
                 "source_quality_score": payload.get("source_quality_score") or analysis.get("source_quality_score"),
                 "source_quality_tier": payload.get("source_quality_tier") or analysis.get("source_quality_tier"),
                 "youtube_url": _youtube_url(payload, video_id, final_start or start),
                 "output_preview_filename": output_preview_filename,
                 "already_reviewed": bool(review),
                 "current_candidate_review": review,
+                "raw_thought_units_count": analysis.get("raw_thought_units_count"),
+                "selection_limit_applied": analysis.get("selection_limit_applied"),
+                "top_n_applied": analysis.get("top_n_applied"),
+                "no_candidate_limit_enabled": analysis.get("no_candidate_limit_enabled"),
             }
         )
     return items
+
+
+def _quality_filter_items(
+    items: list[dict[str, Any]],
+    min_ranking_score: float,
+    min_source_score: float,
+    min_duration: float,
+    max_duration: float,
+    quality_threshold: float,
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for item in items:
+        ranking = _candidate_score(item)
+        source = _to_float(item.get("source_quality_score"))
+        duration = _to_float(item.get("duration_seconds"))
+        if ranking < max(min_ranking_score, quality_threshold):
+            continue
+        if source and source < min_source_score:
+            continue
+        if duration < min_duration or duration > max_duration:
+            continue
+        filtered.append({**item, "quality_score": round(ranking, 2)})
+    return sorted(filtered, key=_candidate_sort_key, reverse=True)
+
+
+def _dedupe_items(items: list[dict[str, Any]], overlap_threshold: float) -> tuple[list[dict[str, Any]], int]:
+    kept: list[dict[str, Any]] = []
+    removed = 0
+    for item in sorted(items, key=_candidate_sort_key, reverse=True):
+        duplicate = next(
+            (
+                other
+                for other in kept
+                if str(other.get("video_id") or "") == str(item.get("video_id") or "")
+                and _overlap_ratio(item, other) >= overlap_threshold
+            ),
+            None,
+        )
+        if duplicate:
+            removed += 1
+            continue
+        kept.append(item)
+    return kept, removed
+
+
+def _limit_per_video(
+    items: list[dict[str, Any]],
+    max_candidates_per_video: str | None,
+    no_candidate_limit: bool,
+) -> list[dict[str, Any]]:
+    if no_candidate_limit or str(max_candidates_per_video or "").lower() == "unlimited":
+        return items
+    if not max_candidates_per_video:
+        return items
+    try:
+        limit = int(max_candidates_per_video)
+    except ValueError:
+        return items
+    if limit <= 0:
+        return []
+    counts: dict[str, int] = {}
+    selected: list[dict[str, Any]] = []
+    for item in items:
+        video_id = str(item.get("video_id") or "")
+        current = counts.get(video_id, 0)
+        if current >= limit:
+            continue
+        counts[video_id] = current + 1
+        selected.append(item)
+    return selected
+
+
+def _merge_existing_items(existing_items: list[Any], new_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for item in existing_items:
+        if not isinstance(item, dict):
+            continue
+        candidate_id = str(item.get("candidate_id") or "")
+        if candidate_id:
+            merged[candidate_id] = item
+    for item in new_items:
+        candidate_id = str(item.get("candidate_id") or "")
+        if candidate_id:
+            merged[candidate_id] = item
+    return list(merged.values())
+
+
+def _stats_by_video(
+    raw_items: list[dict[str, Any]],
+    filtered_items: list[dict[str, Any]],
+    deduped_items: list[dict[str, Any]],
+    final_items: list[dict[str, Any]],
+    no_candidate_limit: bool,
+) -> list[dict[str, Any]]:
+    video_ids = sorted(
+        {
+            str(item.get("video_id") or "")
+            for group in (raw_items, filtered_items, deduped_items, final_items)
+            for item in group
+            if item.get("video_id")
+        }
+    )
+    stats: list[dict[str, Any]] = []
+    for video_id in video_ids:
+        raw = [item for item in raw_items if item.get("video_id") == video_id]
+        filtered = [item for item in filtered_items if item.get("video_id") == video_id]
+        deduped = [item for item in deduped_items if item.get("video_id") == video_id]
+        final = [item for item in final_items if item.get("video_id") == video_id]
+        stats.append(
+            {
+                "video_id": video_id,
+                "title": str((raw[0] if raw else {}).get("video_title") or video_id),
+                "candidates_raw": len(raw),
+                "candidates_after_filter": len(filtered),
+                "candidates_after_dedup": len(deduped),
+                "candidates_exported": len(final),
+                "duplicates_removed": max(0, len(filtered) - len(deduped)),
+                "candidates_dropped_by_quality": max(0, len(raw) - len(filtered)),
+                "candidates_dropped_by_dedupe": max(0, len(filtered) - len(deduped)),
+                "candidates_dropped_by_limit": max(0, len(deduped) - len(final)),
+                "raw_thought_units_count": (raw[0] if raw else {}).get("raw_thought_units_count") or len(raw),
+                "selection_limit_applied": (raw[0] if raw else {}).get("selection_limit_applied")
+                or ("unlimited" if no_candidate_limit else None),
+                "top_n_applied": (raw[0] if raw else {}).get("top_n_applied"),
+                "no_candidate_limit_enabled": (
+                    (raw[0] if raw else {}).get("no_candidate_limit_enabled")
+                    if (raw[0] if raw else {}).get("no_candidate_limit_enabled") is not None
+                    else no_candidate_limit
+                ),
+            }
+        )
+    return stats
+
+
+def _candidate_sort_key(item: dict[str, Any]) -> tuple[float, float, float]:
+    return (
+        _candidate_score(item),
+        _to_float(item.get("source_quality_score")),
+        -_to_float(item.get("rank")),
+    )
+
+
+def _candidate_score(item: dict[str, Any]) -> float:
+    return max(
+        _to_float(item.get("ranking_quality_score")),
+        _to_float(item.get("score")),
+        _to_float(item.get("quality_score")),
+    )
+
+
+def _overlap_ratio(left: dict[str, Any], right: dict[str, Any]) -> float:
+    start = max(_to_float(left.get("start_seconds")), _to_float(right.get("start_seconds")))
+    end = min(_to_float(left.get("end_seconds")), _to_float(right.get("end_seconds")))
+    overlap = max(0.0, end - start)
+    left_duration = max(1.0, _to_float(left.get("duration_seconds")))
+    right_duration = max(1.0, _to_float(right.get("duration_seconds")))
+    return overlap / min(left_duration, right_duration)
 
 
 def _candidate_id(video_id: str, source_collection: str, rank: int, start: object, end: object) -> str:

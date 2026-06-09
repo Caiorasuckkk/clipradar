@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
+import '../core/search_presets.dart';
 import '../models/candidate_clip.dart';
 import '../models/candidate_summary.dart';
 import '../theme/app_colors.dart';
@@ -9,17 +10,22 @@ import '../widgets/df_button.dart';
 import '../widgets/df_card.dart';
 import '../widgets/df_error_state.dart';
 import '../widgets/df_loading_state.dart';
-import '../widgets/df_status_chip.dart';
 import '../widgets/rating_stars.dart';
 import 'processing_screen.dart';
 
 enum CandidateFilter { pending, reviewed, all }
 
 class CandidateClipsScreen extends StatefulWidget {
-  const CandidateClipsScreen({super.key, this.onOpenHome, this.onOpenPosts});
+  const CandidateClipsScreen({
+    super.key,
+    this.onOpenHome,
+    this.onOpenPosts,
+    this.embedded = false,
+  });
 
   final VoidCallback? onOpenHome;
   final VoidCallback? onOpenPosts;
+  final bool embedded;
 
   @override
   State<CandidateClipsScreen> createState() => _CandidateClipsScreenState();
@@ -32,15 +38,18 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
   CandidateSummary? _summary;
   ApprovedGenerationStatus? _generationStatus;
   List<CandidateClip> _clips = [];
+  Set<String> _loadedCandidateIds = {};
   CandidateClip? _clip;
   final CandidateFilter _filter = CandidateFilter.pending;
   bool _loading = true;
   bool _saving = false;
+  final Set<String> _backgroundSavingIds = {};
   bool _startingFinals = false;
   String? _error;
   int? _rating;
   String? _status;
   String _reason = '';
+  double _playbackSpeed = 1.0;
 
   @override
   void initState() {
@@ -58,6 +67,9 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _clips = [];
+      _clip = null;
+      _loadedCandidateIds = {};
     });
     try {
       final summary = await _api.fetchCandidateSummary();
@@ -66,11 +78,13 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
         status: _statusQuery(_filter),
       );
       final clips = _filterEvaluableClips(loadedClips);
+      _debugLoadedCandidates(clips);
       if (!mounted) return;
       setState(() {
         _summary = summary;
         _generationStatus = generationStatus;
         _clips = clips;
+        _loadedCandidateIds = clips.map((clip) => clip.candidateId).toSet();
         _clip = clips.isEmpty ? null : clips.first;
         _loading = false;
       });
@@ -125,7 +139,18 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
 
   Future<void> _saveAndNext() async {
     final clip = _clip;
-    if (clip == null || _saving) return;
+    if (clip == null || _backgroundSavingIds.contains(clip.candidateId)) {
+      return;
+    }
+    if (!_loadedCandidateIds.contains(clip.candidateId)) {
+      debugPrint(
+        '[CandidateSave] stale candidate blocked: ${clip.candidateId} '
+        'loaded_ids=${_loadedCandidateIds.toList()}',
+      );
+      _snack('Este corte não existe mais na fila atual. Atualizando lista...');
+      await _load();
+      return;
+    }
     final rating = _rating;
     final status = _status;
     final reason = _reason.trim();
@@ -162,7 +187,8 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
     );
 
     setState(() {
-      _saving = true;
+      _saving = false;
+      _backgroundSavingIds.add(clip.candidateId);
       _error = null;
       if (_filter == CandidateFilter.pending) {
         _clips = List<CandidateClip>.from(_clips)..removeAt(previousIndex);
@@ -183,6 +209,7 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
     );
 
     try {
+      debugPrint('[CandidateSave] sending candidate_id=${clip.candidateId}');
       final result = await _api.saveCandidateReview(
         candidateId: clip.candidateId,
         status: status,
@@ -191,7 +218,7 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
         notes: notes,
       );
       if (!mounted) return;
-      setState(() => _saving = false);
+      setState(() => _backgroundSavingIds.remove(clip.candidateId));
       _refreshSummaryInBackground();
       if (status == 'approved') {
         _refreshGenerationStatusInBackground();
@@ -205,21 +232,84 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
       } else {
         _snack('Candidato rejeitado.');
       }
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      if (error.statusCode == 404 ||
+          error.body.contains('candidate_not_found')) {
+        debugPrint(
+          '[CandidateSave] 404 candidate_id=${clip.candidateId}; reloading queue',
+        );
+        setState(() {
+          _backgroundSavingIds.remove(clip.candidateId);
+          _clips = previousClips;
+          _clip = previousClip;
+          _summary = previousSummary;
+          _rating = previousRating;
+          _status = previousStatus;
+          _reason = previousReason;
+          _notesController.text = previousNotes;
+        });
+        _snack(
+          'Este corte não existe mais na fila atual. Atualizando lista...',
+        );
+        await _load();
+        return;
+      }
+      setState(() {
+        _backgroundSavingIds.remove(clip.candidateId);
+        _restoreFailedSave(
+          clip: clip,
+          previousIndex: previousIndex,
+          previousSummary: previousSummary,
+          previousRating: previousRating,
+          previousStatus: previousStatus,
+          previousReason: previousReason,
+          previousNotes: previousNotes,
+        );
+        _error = error.toString();
+      });
+      _snack('Não foi possível salvar. Tente novamente.');
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _clips = previousClips;
-        _clip = previousClip;
-        _summary = previousSummary;
-        _rating = previousRating;
-        _status = previousStatus;
-        _reason = previousReason;
-        _notesController.text = previousNotes;
+        _backgroundSavingIds.remove(clip.candidateId);
+        _restoreFailedSave(
+          clip: clip,
+          previousIndex: previousIndex,
+          previousSummary: previousSummary,
+          previousRating: previousRating,
+          previousStatus: previousStatus,
+          previousReason: previousReason,
+          previousNotes: previousNotes,
+        );
         _error = error.toString();
-        _saving = false;
       });
       _snack('Não foi possível salvar. Tente novamente.');
     }
+  }
+
+  void _restoreFailedSave({
+    required CandidateClip clip,
+    required int previousIndex,
+    required CandidateSummary? previousSummary,
+    required int? previousRating,
+    required String? previousStatus,
+    required String previousReason,
+    required String previousNotes,
+  }) {
+    final restored = List<CandidateClip>.from(_clips);
+    if (!restored.any((item) => item.candidateId == clip.candidateId)) {
+      final insertIndex = previousIndex.clamp(0, restored.length);
+      restored.insert(insertIndex, clip);
+    }
+    _clips = restored;
+    _loadedCandidateIds = restored.map((item) => item.candidateId).toSet();
+    _clip ??= clip;
+    _summary = previousSummary;
+    _rating = previousRating;
+    _status = previousStatus;
+    _reason = previousReason;
+    _notesController.text = previousNotes;
   }
 
   CandidateClip? _nextAfterRemoval(
@@ -284,6 +374,12 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
     );
   }
 
+  void _debugLoadedCandidates(List<CandidateClip> clips) {
+    debugPrint(
+      '[CandidateClips] loaded candidate_ids=${clips.map((clip) => clip.candidateId).toList()}',
+    );
+  }
+
   void _debugAdvance({
     required int previousIndex,
     required int newIndex,
@@ -311,8 +407,13 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
       setState(() => _startingFinals = false);
       await Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) =>
-              ProcessingScreen(initialRun: run, onOpenCandidates: _load),
+          builder: (_) => ProcessingScreen(
+            initialRun: run,
+            onOpenCandidates: _load,
+            onOpenHome: widget.onOpenHome,
+            onOpenPosts: widget.onOpenPosts,
+            onOpenReviewed: _load,
+          ),
         ),
       );
       widget.onOpenPosts?.call();
@@ -340,8 +441,13 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) =>
-              ProcessingScreen(initialRun: run, onOpenCandidates: _load),
+          builder: (_) => ProcessingScreen(
+            initialRun: run,
+            onOpenCandidates: _load,
+            onOpenHome: widget.onOpenHome,
+            onOpenPosts: widget.onOpenPosts,
+            onOpenReviewed: _load,
+          ),
         ),
       );
       _load();
@@ -352,22 +458,43 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
   }
 
   Future<void> _searchMoreContent() async {
+    final deep = await _showSearchModeSheet();
+    if (deep == null || !mounted) return;
+    await _startSearch(deep: deep);
+  }
+
+  Future<bool?> _showSearchModeSheet() {
+    return showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      showDragHandle: true,
+      builder: (context) => const _SearchModeSheet(),
+    );
+  }
+
+  Future<void> _startSearch({required bool deep}) async {
     try {
-      final run = await _api.startOpsJob(
+      final result = await _api.startOpsJobWithResult(
         jobKey: 'find_videos_flow',
-        params: const {
-          'max_videos': 3,
-          'max_previews': 10,
-          'include_diagnostics': false,
-          'download_missing': true,
-          'overwrite': true,
-        },
+        params: deep ? deepSearchParams : quickSearchParams,
       );
       if (!mounted) return;
+      if (result.alreadyRunning) {
+        _snack(
+          result.message.isEmpty
+              ? 'Uma busca já está em andamento.'
+              : result.message,
+        );
+      }
       await Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) =>
-              ProcessingScreen(initialRun: run, onOpenCandidates: _load),
+          builder: (_) => ProcessingScreen(
+            initialRun: result.run,
+            onOpenCandidates: _load,
+            onOpenHome: widget.onOpenHome,
+            onOpenPosts: widget.onOpenPosts,
+            onOpenReviewed: _load,
+          ),
         ),
       );
       _load();
@@ -375,6 +502,16 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
       if (!mounted) return;
       setState(() => _error = error.toString());
     }
+  }
+
+  void _cyclePlaybackSpeed() {
+    setState(() {
+      _playbackSpeed = switch (_playbackSpeed) {
+        1.0 => 1.5,
+        1.5 => 2.0,
+        _ => 1.0,
+      };
+    });
   }
 
   Future<void> _quickApprove() async {
@@ -471,6 +608,16 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
     await _saveAndNext();
   }
 
+  Future<void> _showDetailsSheet(CandidateClip clip) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => _CandidateDetailsSheet(clip: clip),
+    );
+  }
+
   void _snack(String message) {
     ScaffoldMessenger.of(
       context,
@@ -479,6 +626,9 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.embedded) {
+      return _body();
+    }
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -489,7 +639,7 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
 
   Widget _body() {
     if (_loading) {
-      return const DfLoadingState(message: 'Carregando candidatos...');
+      return const DfLoadingState(message: 'Carregando cortes...');
     }
     if (_error != null && _clips.isEmpty) {
       return DfErrorState(message: _error!, onRetry: _load);
@@ -536,6 +686,7 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
                 : ClipVideoPlayer(
                     url: _api.candidatePreviewUrl(clip.outputPreviewFilename),
                     aspectRatio: 9 / 16,
+                    playbackSpeed: _playbackSpeed,
                   ),
           ),
           const _Vignette(),
@@ -548,6 +699,8 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
               evaluableCount: _clips.length,
               onRefresh: _load,
               saving: _saving,
+              playbackSpeed: _playbackSpeed,
+              onToggleSpeed: _cyclePlaybackSpeed,
             ),
           ),
           if (_error != null)
@@ -560,11 +713,10 @@ class _CandidateClipsScreenState extends State<CandidateClipsScreen> {
           Positioned(
             left: 14,
             right: 14,
-            bottom: 94,
+            bottom: 96,
             child: _ReelsInfoOverlay(
               clip: clip,
-              position: _clips.indexOf(clip) + 1,
-              total: _clips.length,
+              onShowDetails: () => _showDetailsSheet(clip),
             ),
           ),
           Positioned(
@@ -591,12 +743,16 @@ class _TopMetrics extends StatelessWidget {
     required this.evaluableCount,
     required this.onRefresh,
     required this.saving,
+    required this.playbackSpeed,
+    required this.onToggleSpeed,
   });
 
   final CandidateSummary? summary;
   final int evaluableCount;
   final VoidCallback onRefresh;
   final bool saving;
+  final double playbackSpeed;
+  final VoidCallback onToggleSpeed;
 
   @override
   Widget build(BuildContext context) {
@@ -606,16 +762,44 @@ class _TopMetrics extends StatelessWidget {
         const SizedBox(width: 8),
         _MiniMetric(label: 'Revisados', value: '${summary?.reviewed ?? 0}'),
         const SizedBox(width: 8),
-        _MiniMetric(
-          label: 'Sem preview',
-          value: '${summary?.missingPreview ?? 0}',
-        ),
+        _SpeedPill(speed: playbackSpeed, onTap: onToggleSpeed),
         const Spacer(),
         IconButton.filledTonal(
           onPressed: saving ? null : onRefresh,
           icon: const Icon(Icons.refresh_rounded),
         ),
       ],
+    );
+  }
+}
+
+class _SpeedPill extends StatelessWidget {
+  const _SpeedPill({required this.speed, required this.onTap});
+
+  final double speed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: AppColors.cyan.withValues(alpha: 0.32)),
+        ),
+        child: Text(
+          '${speed.toStringAsFixed(speed % 1 == 0 ? 0 : 1)}x',
+          style: const TextStyle(
+            color: AppColors.cyan,
+            fontSize: 12,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -662,50 +846,86 @@ class _MiniMetric extends StatelessWidget {
 }
 
 class _ReelsInfoOverlay extends StatelessWidget {
-  const _ReelsInfoOverlay({
-    required this.clip,
-    required this.position,
-    required this.total,
-  });
+  const _ReelsInfoOverlay({required this.clip, required this.onShowDetails});
 
   final CandidateClip clip;
-  final int position;
-  final int total;
+  final VoidCallback onShowDetails;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Text(
-          clip.videoTitle,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w900,
-            shadows: [Shadow(color: Colors.black, blurRadius: 8)],
+        Expanded(
+          child: Wrap(
+            spacing: 7,
+            runSpacing: 7,
+            children: [
+              _OverlayPill(
+                icon: Icons.auto_awesome_rounded,
+                label: _scoreLabel(clip),
+              ),
+              if (clip.riskLabel.isNotEmpty)
+                _OverlayPill(
+                  icon: Icons.warning_amber_rounded,
+                  label: clip.riskLabel,
+                  color: AppColors.warning,
+                ),
+              _OverlayPill(
+                icon: Icons.timer_rounded,
+                label: _durationLabel(clip.durationSeconds),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 7,
-          runSpacing: 7,
-          children: [
-            DfStatusChip(label: '$position/$total'),
-            DfStatusChip(label: 'rank ${clip.rank ?? '-'}'),
-            DfStatusChip(label: clip.timeRange),
-            DfStatusChip(label: clip.sourceCollection),
-            if (clip.reason.isNotEmpty) DfStatusChip(label: clip.reason),
-          ],
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Swipe direita aprova · Swipe esquerda rejeita',
-          style: TextStyle(color: AppColors.secondaryText, fontSize: 12),
+        const SizedBox(width: 8),
+        IconButton.filledTonal(
+          tooltip: 'Ver detalhes',
+          onPressed: onShowDetails,
+          icon: const Icon(Icons.info_outline_rounded),
         ),
       ],
+    );
+  }
+}
+
+class _OverlayPill extends StatelessWidget {
+  const _OverlayPill({
+    required this.icon,
+    required this.label,
+    this.color = AppColors.cyan,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.34)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -830,11 +1050,236 @@ class _Vignette extends StatelessWidget {
   }
 }
 
+class _CandidateDetailsSheet extends StatelessWidget {
+  const _CandidateDetailsSheet({required this.clip});
+
+  final CandidateClip clip;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                clip.videoTitle.isEmpty ? 'Detalhes do corte' : clip.videoTitle,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 14),
+              _DetailLine(label: 'candidate_id', value: clip.candidateId),
+              _DetailLine(label: 'video_id', value: clip.videoId),
+              _DetailLine(label: 'origem', value: clip.sourceCollection),
+              _DetailLine(label: 'rank', value: '${clip.rank ?? '-'}'),
+              _DetailLine(label: 'tempo', value: clip.timeRange),
+              _DetailLine(
+                label: 'duração',
+                value: _durationLabel(clip.durationSeconds),
+              ),
+              _DetailLine(label: 'score', value: _scoreLabel(clip)),
+              _DetailLine(
+                label: 'quality',
+                value: _numberLabel(clip.qualityScore),
+              ),
+              _DetailLine(
+                label: 'ranking',
+                value:
+                    '${_numberLabel(clip.rankingQualityScore)} ${clip.rankingQualityTier}'
+                        .trim(),
+              ),
+              _DetailLine(
+                label: 'source_quality',
+                value:
+                    '${_numberLabel(clip.sourceQualityScore)} ${clip.sourceQualityTier}'
+                        .trim(),
+              ),
+              if (clip.riskLabel.isNotEmpty)
+                _DetailLine(label: 'risco', value: clip.riskLabel),
+              if (clip.reason.isNotEmpty)
+                _DetailLine(label: 'reason', value: clip.reason),
+              if (clip.text.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  'Texto detectado',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  clip.text,
+                  style: const TextStyle(color: AppColors.secondaryText),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DetailLine extends StatelessWidget {
+  const _DetailLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: RichText(
+        text: TextSpan(
+          style: const TextStyle(color: AppColors.secondaryText, height: 1.25),
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            TextSpan(text: value.isEmpty ? '-' : value),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _scoreLabel(CandidateClip clip) {
+  final value = clip.score ?? clip.qualityScore ?? clip.rankingQualityScore;
+  return 'score ${_numberLabel(value)}';
+}
+
+String _numberLabel(num? value) {
+  if (value == null) return '-';
+  return value.toStringAsFixed(value % 1 == 0 ? 0 : 1);
+}
+
+String _durationLabel(num? value) {
+  final total = (value ?? 0).round().clamp(0, 9999);
+  if (total < 60) return '${total}s';
+  final minutes = total ~/ 60;
+  final seconds = total % 60;
+  return seconds == 0
+      ? '${minutes}min'
+      : '$minutes:${seconds.toString().padLeft(2, '0')}';
+}
+
 class _ReviewDecision {
   const _ReviewDecision({required this.reason, required this.status});
 
   final String reason;
   final String status;
+}
+
+class _SearchModeSheet extends StatelessWidget {
+  const _SearchModeSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Buscar mais conteúdo',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 14),
+            _SearchModeOption(
+              icon: Icons.flash_on_rounded,
+              title: 'Busca rápida',
+              description:
+                  'Busca até 3 vídeos e prepara até 10 cortes para avaliar rapidamente.',
+              onTap: () => Navigator.of(context).pop(false),
+            ),
+            const SizedBox(height: 10),
+            _SearchModeOption(
+              icon: Icons.travel_explore_rounded,
+              title: 'Busca profunda',
+              description:
+                  'Busca até 10 vídeos, encontra o máximo de bons cortes e prepara 20+ previews.',
+              onTap: () => Navigator.of(context).pop(true),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchModeOption extends StatelessWidget {
+  const _SearchModeOption({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.cyan.withValues(alpha: 0.12),
+              ),
+              child: Icon(icon, color: AppColors.cyan),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
+                    style: const TextStyle(
+                      color: AppColors.secondaryText,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 const _rejectReasons = [
@@ -986,13 +1431,17 @@ class _CandidateEmptyState extends StatelessWidget {
           Icon(Icons.travel_explore_rounded, color: AppColors.cyan, size: 48),
           const SizedBox(height: 14),
           const Text(
-            'Nenhum candidato pronto para avaliar',
+            'Nenhum corte pronto para avaliar',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 8),
           Text(
-            'Você já avaliou todos os cortes com preview disponível. Busque novos conteúdos ou gere previews faltantes.$generationMessage\n\nPara avaliar: $evaluableCount · revisados: ${summary?.reviewed ?? 0} · sem preview: ${summary?.missingPreview ?? 0}',
+            _emptyDescription(
+              generationMessage: generationMessage,
+              evaluableCount: evaluableCount,
+              summary: summary,
+            ),
             textAlign: TextAlign.center,
             style: const TextStyle(color: AppColors.secondaryText),
           ),
@@ -1013,7 +1462,7 @@ class _CandidateEmptyState extends StatelessWidget {
           if (onRenderPreviews != null) ...[
             const SizedBox(height: 10),
             DFSecondaryButton(
-              label: 'Renderizar previews faltantes',
+              label: 'Renderizar mais previews',
               icon: Icons.movie_creation_rounded,
               onPressed: onRenderPreviews,
             ),
@@ -1044,4 +1493,16 @@ class _CandidateEmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+String _emptyDescription({
+  required String generationMessage,
+  required int evaluableCount,
+  required CandidateSummary? summary,
+}) {
+  final missing = summary?.missingPreview ?? 0;
+  final previewMessage = missing > 0
+      ? 'Há bons cortes encontrados aguardando preview. Gere mais previews para continuar a revisão.'
+      : 'Busque novos conteúdos para encontrar mais oportunidades.';
+  return 'Você já avaliou todos os cortes com preview disponível. $previewMessage$generationMessage\n\nPara avaliar: $evaluableCount · revisados: ${summary?.reviewed ?? 0} · sem preview: $missing';
 }

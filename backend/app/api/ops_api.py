@@ -61,12 +61,12 @@ def get_run_logs(run_id: str) -> dict[str, Any]:
 
 @router.post("/jobs/runs/{run_id}/cancel")
 def cancel_run(run_id: str) -> dict[str, Any]:
-    run = runner.mark_cancel_unsupported(run_id)
+    run = runner.cancel_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="run_not_found")
     return {
         "run_id": run_id,
         "status": run.get("status"),
-        "cancel_supported": False,
-        "message": "cancel_not_supported_in_this_version",
+        "cancel_supported": True,
+        "message": run.get("cancel_message") or "job_cancelled",
     }

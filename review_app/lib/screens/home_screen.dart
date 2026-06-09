@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
+import '../core/search_presets.dart';
 import '../models/ops_status.dart';
 import '../models/posts_summary.dart';
 import '../theme/app_colors.dart';
@@ -30,8 +31,10 @@ class _HomeScreenState extends State<HomeScreen> {
   OpsStatus? _ops;
   PostsSummary? _posts;
   bool _loading = true;
-  bool _starting = false;
+  String? _startingMode;
   String? _error;
+
+  bool get _starting => _startingMode != null;
 
   @override
   void initState() {
@@ -62,27 +65,35 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _startAnalysis() async {
+  Future<void> _startAnalysis({required bool deep}) async {
     if (_starting) return;
-    setState(() => _starting = true);
+    setState(() => _startingMode = deep ? 'deep' : 'quick');
     try {
-      final run = await _api.startOpsJob(
+      final result = await _api.startOpsJobWithResult(
         jobKey: 'find_videos_flow',
-        params: const {
-          'max_videos': 3,
-          'max_previews': 10,
-          'include_diagnostics': false,
-          'download_missing': true,
-          'overwrite': true,
-        },
+        params: deep ? deepSearchParams : quickSearchParams,
       );
       if (!mounted) return;
-      setState(() => _starting = false);
+      setState(() => _startingMode = null);
+      if (result.alreadyRunning) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result.message.isEmpty
+                  ? 'Uma busca já está em andamento.'
+                  : result.message,
+            ),
+          ),
+        );
+      }
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => ProcessingScreen(
-            initialRun: run,
+            initialRun: result.run,
             onOpenCandidates: widget.onOpenCandidates,
+            onOpenHome: () {},
+            onOpenPosts: widget.onOpenPosts,
+            onOpenReviewed: widget.onOpenCandidates,
           ),
         ),
       );
@@ -91,7 +102,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _error = error.toString();
-        _starting = false;
+        _startingMode = null;
       });
     }
   }
@@ -157,7 +168,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       width: double.infinity,
                       height: 52,
                       child: FilledButton.icon(
-                        onPressed: _starting ? null : _startAnalysis,
+                        onPressed: _starting
+                            ? null
+                            : () => _startAnalysis(deep: false),
                         icon: _starting
                             ? const SizedBox.square(
                                 dimension: 18,
@@ -167,7 +180,32 @@ class _HomeScreenState extends State<HomeScreen> {
                               )
                             : const Icon(Icons.radar_rounded),
                         label: Text(
-                          _starting ? 'Iniciando...' : 'Fazer análise',
+                          _startingMode == 'quick'
+                              ? 'Iniciando...'
+                              : 'Busca rápida',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: OutlinedButton.icon(
+                        onPressed: _starting
+                            ? null
+                            : () => _startAnalysis(deep: true),
+                        icon: _startingMode == 'deep'
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.travel_explore_rounded),
+                        label: Text(
+                          _startingMode == 'deep'
+                              ? 'Iniciando...'
+                              : 'Busca profunda',
                         ),
                       ),
                     ),
@@ -192,7 +230,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       SizedBox(
                         width: width,
                         child: DfMetricCard(
-                          label: 'Candidatos',
+                          label: 'Cortes',
                           value: '${_ops?.totalCandidates ?? 0}',
                         ),
                       ),
@@ -224,10 +262,10 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 18),
               DFActionCard(
                 icon: Icons.swipe_rounded,
-                title: 'Avaliar candidatos',
+                title: 'Cortes',
                 description:
-                    'Continue a revisão dos previews prontos no formato mobile.',
-                buttonLabel: 'Abrir avaliação',
+                    'Revise cortes para avaliar e acompanhe posts prontos.',
+                buttonLabel: 'Abrir Cortes',
                 onPressed: widget.onOpenCandidates,
               ),
               const SizedBox(height: 12),

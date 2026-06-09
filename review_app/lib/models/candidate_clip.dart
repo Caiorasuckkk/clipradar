@@ -9,6 +9,14 @@ class CandidateClip {
     required this.endSeconds,
     required this.durationSeconds,
     required this.reason,
+    required this.score,
+    required this.qualityScore,
+    required this.rankingQualityScore,
+    required this.rankingQualityTier,
+    required this.sourceQualityScore,
+    required this.sourceQualityTier,
+    required this.riskLabel,
+    required this.text,
     required this.youtubeUrl,
     required this.outputPreviewFilename,
     required this.previewExists,
@@ -28,6 +36,14 @@ class CandidateClip {
   final num? endSeconds;
   final num? durationSeconds;
   final String reason;
+  final num? score;
+  final num? qualityScore;
+  final num? rankingQualityScore;
+  final String rankingQualityTier;
+  final num? sourceQualityScore;
+  final String sourceQualityTier;
+  final String riskLabel;
+  final String text;
   final String youtubeUrl;
   final String outputPreviewFilename;
   final bool previewExists;
@@ -51,6 +67,14 @@ class CandidateClip {
       endSeconds: endSeconds,
       durationSeconds: durationSeconds,
       reason: reason,
+      score: score,
+      qualityScore: qualityScore,
+      rankingQualityScore: rankingQualityScore,
+      rankingQualityTier: rankingQualityTier,
+      sourceQualityScore: sourceQualityScore,
+      sourceQualityTier: sourceQualityTier,
+      riskLabel: riskLabel,
+      text: text,
       youtubeUrl: youtubeUrl,
       outputPreviewFilename: outputPreviewFilename,
       previewExists: previewExists,
@@ -74,6 +98,14 @@ class CandidateClip {
       endSeconds: _num(json['final_end_seconds']) ?? _num(json['end_seconds']),
       durationSeconds: _num(json['duration_seconds']),
       reason: _string(json['reason']),
+      score: _num(json['score']),
+      qualityScore: _num(json['quality_score']),
+      rankingQualityScore: _num(json['ranking_quality_score']),
+      rankingQualityTier: _string(json['ranking_quality_tier']),
+      sourceQualityScore: _num(json['source_quality_score']),
+      sourceQualityTier: _string(json['source_quality_tier']),
+      riskLabel: _riskLabel(json),
+      text: _string(json['text']),
       youtubeUrl: _string(json['youtube_url']),
       outputPreviewFilename: _string(json['output_preview_filename']),
       previewExists: json['preview_exists'] == true,
@@ -104,6 +136,24 @@ class CandidateClip {
       value is num ? value : num.tryParse(value?.toString() ?? '');
   static int? _int(Object? value) =>
       value is int ? value : int.tryParse(value?.toString() ?? '');
+
+  static String _riskLabel(Map<String, dynamic> json) {
+    for (final key in const [
+      'copyright_risk',
+      'copyright_risk_tier',
+      'copyright_risk_label',
+      'risk_label',
+      'sponsor_product_tier',
+    ]) {
+      final value = _string(json[key]).trim();
+      if (value.isNotEmpty) return value;
+    }
+    final sponsorScore = _num(json['sponsor_product_score']);
+    if (sponsorScore != null && sponsorScore > 0) {
+      return 'produto ${sponsorScore.toStringAsFixed(1)}';
+    }
+    return '';
+  }
 }
 
 class CandidateReview {

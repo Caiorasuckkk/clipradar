@@ -20,6 +20,7 @@ from app.services.final_clips_service import (
     save_final_reviews,
 )
 from app.services.candidate_review_service import (
+    QUEUE_PATH,
     filter_candidate_clips,
     candidate_summary,
     is_safe_candidate_id,
@@ -323,7 +324,8 @@ def get_candidate_clip(candidate_id: str) -> dict[str, Any]:
 def save_candidate_clip_review(candidate_id: str, payload: CandidateClipReviewPayload) -> dict[str, Any]:
     clip = _find_candidate_clip_by_id(candidate_id)
     if not clip:
-        raise HTTPException(status_code=404, detail="candidate_clip_not_found")
+        _log_candidate_not_found(candidate_id)
+        raise HTTPException(status_code=404, detail=_candidate_not_found_detail(candidate_id))
     reviews = load_candidate_reviews()
     now = datetime.utcnow().isoformat()
     previous = reviews.get(candidate_id, {})
@@ -512,10 +514,34 @@ def _find_final_clip_by_id(final_clip_id: str) -> dict[str, Any] | None:
 def _find_candidate_clip_by_id(candidate_id: str) -> dict[str, Any] | None:
     if not is_safe_candidate_id(candidate_id):
         return None
+    normalized = str(candidate_id)
     for clip in load_candidate_queue():
-        if clip["candidate_id"] == candidate_id:
+        if str(clip.get("candidate_id") or "") == normalized:
             return clip
     return None
+
+
+def _candidate_not_found_detail(candidate_id: str) -> dict[str, Any]:
+    candidates = load_candidate_queue()
+    return {
+        "error": "candidate_not_found",
+        "candidate_id": candidate_id,
+        "available_count": len(candidates),
+        "suggestion": "reload_candidate_queue",
+    }
+
+
+def _log_candidate_not_found(candidate_id: str) -> None:
+    candidates = load_candidate_queue()
+    first_ids = [str(item.get("candidate_id") or "") for item in candidates[:10]]
+    print(
+        "[candidate_review] candidate_not_found "
+        f"candidate_id={candidate_id} "
+        f"available_count={len(candidates)} "
+        f"first_candidate_ids={first_ids} "
+        f"queue_path={QUEUE_PATH}",
+        flush=True,
+    )
 
 
 def _filter_clips(

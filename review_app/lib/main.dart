@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
-import 'screens/candidate_clips_screen.dart';
+import 'screens/cuts_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/more_screen.dart';
-import 'screens/posts_screen.dart';
 import 'theme/app_colors.dart';
 import 'widgets/df_bottom_nav.dart';
 
@@ -70,6 +69,14 @@ class _ReviewTabs extends StatefulWidget {
 
 class _ReviewTabsState extends State<_ReviewTabs> {
   int _index = 0;
+  CutsSection _cutsSection = CutsSection.review;
+
+  void _openCuts(CutsSection section) {
+    setState(() {
+      _index = 1;
+      _cutsSection = section;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -78,15 +85,17 @@ class _ReviewTabsState extends State<_ReviewTabs> {
         index: _index,
         children: [
           HomeScreen(
-            onOpenCandidates: () => setState(() => _index = 1),
-            onOpenPosts: () => setState(() => _index = 2),
+            onOpenCandidates: () => _openCuts(CutsSection.review),
+            onOpenPosts: () => _openCuts(CutsSection.posts),
           ),
-          CandidateClipsScreen(
+          CutsScreen(
+            section: _cutsSection,
+            onSectionChanged: (section) => setState(() {
+              _cutsSection = section;
+            }),
             onOpenHome: () => setState(() => _index = 0),
-            onOpenPosts: () => setState(() => _index = 2),
           ),
-          const PostsScreen(),
-          MoreScreen(onOpenCandidates: () => setState(() => _index = 1)),
+          MoreScreen(onOpenCandidates: () => _openCuts(CutsSection.review)),
         ],
       ),
       bottomNavigationBar: DFBottomNav(
