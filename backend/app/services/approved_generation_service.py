@@ -87,7 +87,11 @@ def run_generation_worker(run_id: str | None = None, force_failed: bool = False)
         "elapsed_seconds": None,
         "pending_candidate_ids": pending,
         "approved_reviews_count": audit_before["approved_reviews_count"],
+        "approved_already_generated_count": audit_before["generated_for_approved_count"],
         "approved_missing_generation_count": audit_before["missing_generation_count"],
+        "finals_reused": audit_before["generated_for_approved_count"],
+        "finals_rendered": 0,
+        "metadata_reconciled": 0,
         "status": "ok",
         "command": _command_for_display(_pipeline_command()),
         "returncode": None,
@@ -107,6 +111,7 @@ def run_generation_worker(run_id: str | None = None, force_failed: bool = False)
                 "elapsed_seconds": round(time.perf_counter() - started_perf, 2),
                 "status": "nothing_to_generate",
                 "refresh_result": refresh_result,
+                "metadata_reconciled": len(refresh_result.get("marked_final_reviews", [])),
             }
         )
         _write_report(report)
@@ -133,6 +138,7 @@ def run_generation_worker(run_id: str | None = None, force_failed: bool = False)
     generated_now = set(audit_after["generated_candidate_ids"]) & set(pending)
     still_missing = [candidate_id for candidate_id in pending if candidate_id not in generated_now]
     if completed.returncode == 0:
+        report["finals_rendered"] = len(generated_now)
         generated = set(str(item) for item in state.get("generated_candidate_ids", []))
         generated.update(generated_now)
         state["generated_candidate_ids"] = sorted(generated)
@@ -170,6 +176,7 @@ def run_generation_worker(run_id: str | None = None, force_failed: bool = False)
         {
             "finished_at": _now(),
             "elapsed_seconds": round(time.perf_counter() - started_perf, 2),
+            "metadata_reconciled": len((refresh_result or {}).get("marked_final_reviews", [])),
         }
     )
     _write_report(report)
@@ -191,6 +198,9 @@ def generation_status() -> dict[str, Any]:
         "approved_reviews_count": audit["approved_reviews_count"],
         "approved_already_generated_count": audit["generated_for_approved_count"],
         "approved_missing_generation_count": audit["missing_generation_count"],
+        "finals_reused": audit["generated_for_approved_count"],
+        "finals_rendered": len(state.get("generated_candidate_ids", [])),
+        "metadata_reconciled": len(audit.get("post_metadata_candidate_ids", [])),
         "last_run_id": state.get("last_run_id") or "",
         "latest_error": state.get("latest_error") or "",
         "pending_candidate_ids": state.get("pending_candidate_ids", []),

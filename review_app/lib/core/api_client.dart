@@ -10,6 +10,7 @@ import '../models/job_run.dart';
 import '../models/ops_status.dart';
 import '../models/candidate_clip.dart';
 import '../models/candidate_summary.dart';
+import '../models/cuts_analytics.dart';
 import '../models/post_item.dart';
 import '../models/posts_summary.dart';
 import 'app_config.dart';
@@ -320,6 +321,14 @@ class ApiClient {
     final response = await _client.get(_uri('/posts/summary'));
     _throwIfBad(response);
     return PostsSummary.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<CutsAnalytics> fetchCutsAnalytics() async {
+    final response = await _client.get(_uri('/analytics/cuts/summary'));
+    _throwIfBad(response);
+    return CutsAnalytics.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }

@@ -14,6 +14,7 @@ from typing import Any
 from app import config
 from app.services.candidate_review_service import QUEUE_PATH
 from app.services.candidate_preview_validation_service import validate_candidate_preview
+from app.services.cache_manifest_service import update_video_cache
 
 
 SOURCE_EXTENSIONS = (".mp4", ".mkv", ".webm", ".mov")
@@ -105,6 +106,11 @@ def main() -> None:
 
     print("RENDER CANDIDATE PREVIEWS")
     print(f"Inputs: {len(items)}")
+    print(f"previews_requested: {len(items)}")
+    print(f"previews_rendered: {sum(1 for item in results if item['status'] == 'rendered')}")
+    print(f"previews_reused: {sum(1 for item in results if item.get('cache_hit'))}")
+    print(f"previews_invalid_reprocessed: {sum(1 for item in results if item.get('invalid_reprocessed'))}")
+    print(f"previews_failed: {sum(1 for item in results if item['status'] in {'error', 'missing_source', 'invalid_preview'})}")
     print(f"Rendered: {sum(1 for item in results if item['status'] == 'rendered')}")
     print(f"Skipped: {sum(1 for item in results if item['status'] == 'skipped')}")
     print(f"Missing source: {sum(1 for item in results if item['status'] == 'missing_source')}")
@@ -142,6 +148,8 @@ def _render_item(
         "output_path": str(output_path),
         "source_path": "",
         "downloaded_missing_source": False,
+        "cache_hit": False,
+        "invalid_reprocessed": False,
         "status": "skipped",
         "ffmpeg_command": "",
         "error_message": "",
@@ -172,9 +180,14 @@ def _render_item(
         validation = validate_candidate_preview(output_path, deep=True)
         result["preview_validation"] = validation.to_dict()
         if validation.valid:
+            print(f"[cache_hit] preview candidate_id={candidate_id}", flush=True)
             result["status"] = "skipped"
+            result["cache_hit"] = True
             result["error_message"] = "preview já existe; use --overwrite"
+            update_video_cache(video_id)
             return result
+        print(f"[cache_invalid] preview candidate_id={candidate_id}", flush=True)
+        result["invalid_reprocessed"] = True
         try:
             output_path.unlink(missing_ok=True)
         except Exception:
@@ -225,6 +238,7 @@ def _render_item(
         result["error_message"] = validation.error_message
         return result
     result["status"] = "rendered"
+    update_video_cache(video_id)
     _clear_failed_download(video_id=video_id, candidate_id=candidate_id)
     return result
 
@@ -434,6 +448,11 @@ def _write_report(results: list[dict[str, Any]], dry_run: bool, interrupted: boo
         "generated_at": datetime.utcnow().isoformat(),
         "dry_run": dry_run,
         "interrupted": interrupted,
+        "previews_requested": len(results),
+        "previews_rendered": sum(1 for item in results if item["status"] == "rendered"),
+        "previews_reused": sum(1 for item in results if item.get("cache_hit")),
+        "previews_invalid_reprocessed": sum(1 for item in results if item.get("invalid_reprocessed")),
+        "previews_failed": sum(1 for item in results if item["status"] in {"error", "missing_source", "invalid_preview"}),
         "items": results,
     }
     _write_json(json_path, payload)

@@ -17,6 +17,7 @@ from app.services.candidate_review_service import (
     filter_candidate_clips,
     load_candidate_queue,
 )
+from app.services.cache_manifest_service import get_cache_status, has_valid_clips
 from app.services.video_history_service import VideoHistoryService
 
 
@@ -117,6 +118,7 @@ def main() -> None:
     finished_at = datetime.utcnow().isoformat()
     summary = _candidate_summary()
     queue_payload = _candidate_queue_payload()
+    cache_metrics = _cache_metrics_from_results(results, export_video_ids)
     steps_failed = sum(1 for item in results if item["status"] == "error")
     has_ready_candidates = summary["total_candidates"] > 0 and summary["preview_ready"] > 0
     pipeline_status = "success"
@@ -150,6 +152,7 @@ def main() -> None:
         "candidates_dropped_by_dedupe": queue_payload.get("candidates_dropped_by_dedupe"),
         "candidates_dropped_by_limit": queue_payload.get("candidates_dropped_by_limit"),
         "candidate_stats_by_video": queue_payload.get("stats_by_video", []),
+        **cache_metrics,
         "steps_total": len(results),
         "steps_ok": sum(1 for item in results if item["status"] == "ok"),
         "steps_skipped": sum(1 for item in results if item["status"] in {"dry_run", "skipped"}),
@@ -175,6 +178,10 @@ def main() -> None:
     print(f"preview_ready: {payload['preview_ready']}")
     print(f"missing_preview: {payload['missing_preview']}")
     print(f"candidate_pending_reviews: {payload['candidate_pending_reviews']}")
+    print(f"cache_hits: {payload['cache_hits']}")
+    print(f"cache_misses: {payload['cache_misses']}")
+    print(f"cache_partials: {payload['cache_partials']}")
+    print(f"cache_bypassed: {payload['cache_bypassed']}")
     print(f"status: {pipeline_status}")
     print(f"next_action: {payload['next_action']}")
     print(f"JSON: {report_paths['json']}")
@@ -623,12 +630,15 @@ def _clips_path(video_id: str) -> Path:
 
 
 def _clip_cache_exists(video_id: str) -> bool:
-    path = _clips_path(video_id)
-    return path.exists() and path.stat().st_size > 0
+    return has_valid_clips(video_id)
 
 
 def _cached_step_result(video_id: str, started_perf: float) -> Step:
     now = datetime.utcnow().isoformat()
+    cache = get_cache_status(video_id)
+    transcript_hit = str(bool(cache.get("transcript_exists"))).lower()
+    clips_hit = str(bool(cache.get("clips_exists"))).lower()
+    previews_hit = str(int(cache.get("previews_ready_count") or 0) > 0).lower()
     return {
         "name": "process_queue_video",
         "command": f"cache_hit {video_id}",
@@ -637,7 +647,11 @@ def _cached_step_result(video_id: str, started_perf: float) -> Step:
         "started_at": now,
         "finished_at": now,
         "elapsed_seconds": round(time.perf_counter() - started_perf, 2),
-        "stdout_tail": f"[step3_cache_hit] video_id={video_id} clips_path={_clips_path(video_id)}",
+        "stdout_tail": (
+            f"[cache_check] video_id={video_id}\n"
+            f"[cache_hit] transcript={transcript_hit} clips={clips_hit} previews={previews_hit} video_id={video_id}\n"
+            f"[step3_cache_hit] video_id={video_id} clips_path={_clips_path(video_id)}"
+        ),
         "stderr_tail": "",
         "error_message": "",
     }
@@ -932,6 +946,44 @@ def _candidate_summary() -> dict[str, int]:
     }
 
 
+def _cache_metrics_from_results(results: list[Step], export_video_ids: list[str]) -> dict[str, Any]:
+    text = "\n".join(
+        "\n".join([str(item.get("stdout_tail") or ""), str(item.get("stderr_tail") or "")])
+        for item in results
+    )
+    hits = len(re.findall(r"\[cache_hit\]", text))
+    misses = len(re.findall(r"\[cache_miss\]", text))
+    partials = len(re.findall(r"\[cache_partial\]", text))
+    bypassed = len(re.findall(r"\[cache_bypass\]", text))
+    processed_from_scratch = len(
+        {
+            match.group(1)
+            for match in re.finditer(r"\[step3_process_start\]\s+video_id=([^\s]+)", text)
+        }
+    )
+    reused_ids = {
+        match.group(1)
+        for match in re.finditer(r"\[step3_cache_hit\]\s+video_id=([^\s]+)", text)
+    }
+    if not reused_ids:
+        reused_ids = {
+            video_id
+            for video_id in export_video_ids
+            if video_id and has_valid_clips(video_id)
+        }
+    estimated_saved = len(reused_ids) * 240
+    return {
+        "cache_enabled": True,
+        "cache_hits": hits,
+        "cache_misses": misses,
+        "cache_partials": partials,
+        "cache_bypassed": bypassed,
+        "videos_reused_from_cache": len(reused_ids),
+        "videos_processed_from_scratch": processed_from_scratch,
+        "estimated_seconds_saved": estimated_saved if estimated_saved else None,
+    }
+
+
 def _candidate_queue_payload() -> dict[str, Any]:
     try:
         with QUEUE_PATH.open("r", encoding="utf-8") as file:
@@ -978,6 +1030,7 @@ def _finish_pipeline(
     summary = _candidate_summary()
     queue_payload = _candidate_queue_payload()
     pending_reviewable = _pending_reviewable_count()
+    cache_metrics = _cache_metrics_from_results(results, export_video_ids)
     steps_failed = sum(1 for item in results if item["status"] == "error")
     has_ready_candidates = summary["total_candidates"] > 0 and summary["preview_ready"] > 0
     pipeline_status = "success"
@@ -1025,6 +1078,7 @@ def _finish_pipeline(
         "candidates_dropped_by_dedupe": queue_payload.get("candidates_dropped_by_dedupe"),
         "candidates_dropped_by_limit": queue_payload.get("candidates_dropped_by_limit"),
         "candidate_stats_by_video": queue_payload.get("stats_by_video", []),
+        **cache_metrics,
         "steps_total": len(results),
         "steps_ok": sum(1 for item in results if item["status"] == "ok"),
         "steps_skipped": sum(1 for item in results if item["status"] == "dry_run"),
@@ -1060,6 +1114,12 @@ def _finish_pipeline(
     print(f"missing_preview: {payload['missing_preview']}")
     print(f"candidate_pending_reviews: {payload['candidate_pending_reviews']}")
     print(f"pending_reviewable_count: {payload['pending_reviewable_count']}")
+    print(f"cache_hits: {payload['cache_hits']}")
+    print(f"cache_misses: {payload['cache_misses']}")
+    print(f"cache_partials: {payload['cache_partials']}")
+    print(f"cache_bypassed: {payload['cache_bypassed']}")
+    print(f"videos_reused_from_cache: {payload['videos_reused_from_cache']}")
+    print(f"videos_processed_from_scratch: {payload['videos_processed_from_scratch']}")
     print(f"status: {pipeline_status}")
     if warning_message:
         print(f"warning_message: {warning_message}")
@@ -1110,6 +1170,14 @@ def _markdown_report(payload: dict[str, Any]) -> str:
         f"Preview ready: {payload['preview_ready']}",
         f"Pending reviews: {payload['candidate_pending_reviews']}",
         f"Next action: {payload['next_action']}",
+        f"Cache enabled: {payload.get('cache_enabled')}",
+        f"Cache hits: {payload.get('cache_hits')}",
+        f"Cache misses: {payload.get('cache_misses')}",
+        f"Cache partials: {payload.get('cache_partials')}",
+        f"Cache bypassed: {payload.get('cache_bypassed')}",
+        f"Videos reused from cache: {payload.get('videos_reused_from_cache')}",
+        f"Videos processed from scratch: {payload.get('videos_processed_from_scratch')}",
+        f"Estimated seconds saved: {payload.get('estimated_seconds_saved')}",
         "",
     ]
     for index, step in enumerate(payload["steps"], start=1):

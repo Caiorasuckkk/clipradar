@@ -9,6 +9,15 @@ from pathlib import Path
 from typing import Any
 
 from app import config
+from app.services.cache_manifest_service import (
+    get_cache_status,
+    has_valid_clips,
+    has_valid_download,
+    has_valid_transcript,
+    record_cache_run_metrics,
+    touch_video_cache,
+    update_video_cache,
+)
 from app.services.clip_analyzer_service import ClipAnalyzerService
 from app.services.downloader_service import DownloaderService
 from app.services.metadata_service import MetadataService
@@ -23,18 +32,24 @@ def main() -> None:
     parser.add_argument("--video-ids")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--cache-check-only", action="store_true")
     args = parser.parse_args()
 
     started = time.perf_counter()
     history = VideoHistoryService()
-    downloader = DownloaderService()
-    transcriber = TranscriptionService(model_size=config.WHISPER_MODEL_SIZE)
-    analyzer = ClipAnalyzerService()
-    metadata_svc = MetadataService()
+    downloader: DownloaderService | None = None
+    transcriber: TranscriptionService | None = None
+    analyzer: ClipAnalyzerService | None = None
+    metadata_svc: MetadataService | None = None
 
     manual_ids = _parse_manual_ids(args.video_id, args.video_ids)
     if manual_ids:
-        queued = _manual_videos(history, manual_ids, force=args.force)
+        queued = _manual_videos(
+            history,
+            manual_ids,
+            force=args.force,
+            cache_check_only=args.cache_check_only,
+        )
         print_manual_selection(queued)
         if args.dry_run:
             print("DRY RUN: nenhum download, Whisper ou análise executados.")
@@ -48,6 +63,12 @@ def main() -> None:
     total_clips = 0
     errors = 0
     rejected = 0
+    cache_hits = 0
+    cache_misses = 0
+    cache_partials = 0
+    cache_bypassed = 0
+    videos_reused = 0
+    videos_processed_from_scratch = 0
 
     videos_to_process = queued if manual_ids else queued[: config.MAX_VIDEOS_PER_RUN]
     total_videos = len(videos_to_process)
@@ -62,13 +83,82 @@ def main() -> None:
         )
         print(f"Processando [{video_id}]: {title}")
         cached_output = config.STORAGE_CLIPS_DIR / f"{video_id}_clips.json"
-        if cached_output.exists() and not args.force:
-            history.mark_done(video_id)
-            processed += 1
+        cache_entry = get_cache_status(video_id)
+        missing_cache_parts = _missing_cache_parts(cache_entry)
+        done_skip_reason = str(video.get("_cache_skip_reason") or "")
+        reusable_cache = bool(
+            cache_entry.get("transcript_exists")
+            or cache_entry.get("clips_exists")
+            or int(cache_entry.get("previews_ready_count") or 0) > 0
+        )
+        reused_this_video = False
+        print(f"[cache_check] video_id={video_id}", flush=True)
+        if args.force:
+            cache_bypassed += 1
+            print(f"[cache_bypass] overwrite=true video_id={video_id}", flush=True)
+        elif done_skip_reason and reusable_cache:
+            cache_hits += 1
+            videos_reused += 1
+            reused_this_video = True
+            touch_video_cache(video_id)
             print(
-                f"[step3_cache_hit] video_id={video_id} clips_path={cached_output}",
+                f"[cache_hit] done video_id={video_id} reason={done_skip_reason}",
                 flush=True,
             )
+            if cache_entry.get("transcript_exists"):
+                print(f"[cache_hit] transcript video_id={video_id}", flush=True)
+            if cache_entry.get("clips_exists"):
+                print(f"[cache_hit] clips video_id={video_id}", flush=True)
+            if int(cache_entry.get("previews_ready_count") or 0) > 0:
+                print(f"[cache_hit] previews video_id={video_id}", flush=True)
+            print(
+                f"[step3_video_end] video_id={video_id} status=CACHED_DONE "
+                f"elapsed_seconds={round(time.perf_counter() - video_started, 2)}",
+                flush=True,
+            )
+            continue
+        elif not missing_cache_parts:
+            cache_hits += 1
+            videos_reused += 1
+            reused_this_video = True
+            print(
+                f"[cache_hit] transcript=true clips=true previews=true video_id={video_id}",
+                flush=True,
+            )
+        elif len(missing_cache_parts) < 3:
+            cache_partials += 1
+            print(
+                f"[cache_partial] video_id={video_id} missing={','.join(missing_cache_parts)}",
+                flush=True,
+            )
+        else:
+            cache_misses += 1
+            print(
+                f"[cache_miss] video_id={video_id} missing={','.join(missing_cache_parts)}",
+                flush=True,
+            )
+        if args.cache_check_only:
+            print(
+                f"[step3_video_end] video_id={video_id} status=CACHE_CHECK_ONLY "
+                f"elapsed_seconds={round(time.perf_counter() - video_started, 2)}",
+                flush=True,
+            )
+            continue
+        if has_valid_clips(video_id) and not args.force:
+            history.mark_done(video_id)
+            processed += 1
+            if not reused_this_video:
+                videos_reused += 1
+                reused_this_video = True
+            touch_video_cache(video_id)
+            print(
+                f"[cache_hit] clips video_id={video_id} clips_path={cached_output}",
+                flush=True,
+            )
+            if has_valid_transcript(video_id):
+                print(f"[cache_hit] transcript video_id={video_id}", flush=True)
+            if has_valid_download(video_id):
+                print(f"[cache_hit] download video_id={video_id}", flush=True)
             print(
                 f"[step3_video_end] video_id={video_id} status=CACHED "
                 f"elapsed_seconds={round(time.perf_counter() - video_started, 2)}",
@@ -76,13 +166,20 @@ def main() -> None:
             )
             continue
         history.mark_processing(video_id)
+        videos_processed_from_scratch += 1
 
         try:
             print(f"[step3_process_start] video_id={video_id}", flush=True)
+            if transcriber is None:
+                transcriber = TranscriptionService(model_size=config.WHISPER_MODEL_SIZE)
             transcript = transcriber.load_transcript(video_id)
             if not transcript:
                 download_started = time.perf_counter()
+                if has_valid_download(video_id) and not args.force:
+                    print(f"[cache_hit] download video_id={video_id}", flush=True)
                 print(f"[step3_download_start] video_id={video_id}", flush=True)
+                if downloader is None:
+                    downloader = DownloaderService()
                 audio_path = downloader.download(video_id, video["url"])
                 print(
                     f"[step3_download_end] video_id={video_id} "
@@ -105,8 +202,11 @@ def main() -> None:
                 transcriber.save_transcript(video_id, transcript)
                 downloader.cleanup(video_id)
             else:
+                print(f"[cache_hit] transcript video_id={video_id}", flush=True)
                 print(f"[step3_transcript_cache_hit] video_id={video_id}", flush=True)
 
+            if analyzer is None:
+                analyzer = ClipAnalyzerService()
             analysis = analyzer.analyze_with_diagnostics(transcript, video)
             clips = analysis["clips"]
             diagnostic_candidates = analysis["diagnostic_candidates"]
@@ -120,6 +220,12 @@ def main() -> None:
                 )
             if not clips and not diagnostic_candidates:
                 output_path = save_clips(video, analysis, transcript)
+                update_video_cache(
+                    video_id,
+                    video_title=title,
+                    youtube_url=str(video.get("url") or ""),
+                    last_processed=True,
+                )
                 if analysis["analysis_summary"].get("should_continue_video_review") is False:
                     history.mark_source_rejected(video_id)
                 else:
@@ -129,6 +235,12 @@ def main() -> None:
                 continue
             if not clips and diagnostic_candidates:
                 output_path = save_clips(video, analysis, transcript)
+                update_video_cache(
+                    video_id,
+                    video_title=title,
+                    youtube_url=str(video.get("url") or ""),
+                    last_processed=True,
+                )
                 if analysis["analysis_summary"].get("should_continue_video_review") is False:
                     history.mark_weak_source_reviewed(video_id)
                 else:
@@ -141,6 +253,8 @@ def main() -> None:
                 continue
 
             for clip in clips:
+                if metadata_svc is None:
+                    metadata_svc = MetadataService()
                 meta = metadata_svc.generate(
                     clip_text=clip["text"],
                     video_title=video.get("title", ""),
@@ -149,6 +263,12 @@ def main() -> None:
                 clip.update(meta)
 
             output_path = save_clips(video, analysis, transcript)
+            update_video_cache(
+                video_id,
+                video_title=title,
+                youtube_url=str(video.get("url") or ""),
+                last_processed=True,
+            )
             history.mark_done(video_id)
             processed += 1
             total_clips += len(clips)
@@ -170,6 +290,26 @@ def main() -> None:
             )
 
     elapsed = time.perf_counter() - started
+    cache_summary = {
+        "cache_hits": cache_hits,
+        "cache_misses": cache_misses,
+        "cache_partials": cache_partials,
+        "cache_bypassed": cache_bypassed,
+        "videos_reused": videos_reused,
+        "videos_processed_from_scratch": videos_processed_from_scratch,
+        "estimated_seconds_saved": videos_reused * 240 if videos_reused else 0,
+    }
+    record_cache_run_metrics(cache_summary)
+    print(
+        f"[cache_summary] cache_hits={cache_summary['cache_hits']} "
+        f"cache_misses={cache_summary['cache_misses']} "
+        f"cache_partials={cache_summary['cache_partials']} "
+        f"cache_bypassed={cache_summary['cache_bypassed']} "
+        f"videos_reused={cache_summary['videos_reused']} "
+        f"videos_processed_from_scratch={cache_summary['videos_processed_from_scratch']} "
+        f"estimated_seconds_saved={cache_summary['estimated_seconds_saved']}",
+        flush=True,
+    )
     print_summary(processed, total_clips, errors, rejected, elapsed)
 
 
@@ -208,7 +348,12 @@ def _parse_manual_ids(video_id: str | None, video_ids: str | None) -> list[str]:
     return list(dict.fromkeys(ids))
 
 
-def _manual_videos(history: VideoHistoryService, video_ids: list[str], force: bool) -> list[dict[str, Any]]:
+def _manual_videos(
+    history: VideoHistoryService,
+    video_ids: list[str],
+    force: bool,
+    cache_check_only: bool = False,
+) -> list[dict[str, Any]]:
     data = history._read()
     selected: list[dict[str, Any]] = []
     for video_id in video_ids:
@@ -217,9 +362,20 @@ def _manual_videos(history: VideoHistoryService, video_ids: list[str], force: bo
             print(f"[manual] vídeo não encontrado no histórico: {video_id}")
             continue
         if item.get("status") == "done" and not force:
-            print(f"[manual] pulando done sem --force: {video_id} | {item.get('title', '')}")
+            cache_entry = get_cache_status(video_id)
+            if (
+                cache_check_only
+                or cache_entry.get("transcript_exists")
+                or cache_entry.get("clips_exists")
+                or int(cache_entry.get("previews_ready_count") or 0) > 0
+            ):
+                cached_item = dict(item)
+                cached_item["_cache_skip_reason"] = "already_done_without_force"
+                selected.append(cached_item)
+                continue
+            print(f"[manual] pulando done sem cache válido: {video_id} | {item.get('title', '')}")
             continue
-        selected.append(item)
+        selected.append(dict(item))
     return selected
 
 
@@ -245,6 +401,19 @@ def _transcript_metadata(transcript: dict[str, Any]) -> dict[str, Any]:
         "language_conflict",
     ]
     return {key: transcript.get(key) for key in keys if key in transcript}
+
+
+def _missing_cache_parts(cache_entry: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    if not cache_entry.get("downloaded_video_path") and not cache_entry.get("downloaded_audio_path"):
+        missing.append("download")
+    if not cache_entry.get("transcript_exists"):
+        missing.append("transcript")
+    if not cache_entry.get("clips_exists"):
+        missing.append("clips")
+    if int(cache_entry.get("previews_ready_count") or 0) <= 0:
+        missing.append("previews")
+    return missing
 
 def print_processing_candidates(videos: list[dict[str, Any]]) -> None:
     print("")

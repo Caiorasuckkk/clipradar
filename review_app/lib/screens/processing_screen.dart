@@ -229,7 +229,8 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
     final backendReadyHint =
         _candidateSummary == null && _run.pendingReviewableCount > 0;
     final readyDespiteFailure =
-        failed && (_hasReadyCandidates || backendReadyHint);
+        failed &&
+        (_hasReadyCandidates || backendReadyHint || _hasCandidateResults);
     final hasPartialReady =
         _run.partialReviewable ||
         _run.partialPendingReviewableCount > 0 ||
@@ -283,7 +284,7 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
             Text(
               success
                   ? successWarning
-                        ? 'Cortes encontrados'
+                        ? 'Busca concluída com avisos'
                         : 'Análise concluída'
                   : readyDespiteFailure
                   ? 'Cortes encontrados'
@@ -456,6 +457,16 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
     return _readyCandidateCount > 0;
   }
 
+  bool get _hasCandidateResults {
+    final summary = _candidateSummary;
+    if (summary != null) {
+      return summary.totalCandidates > 0 ||
+          summary.previewReady > 0 ||
+          summary.reviewed > 0;
+    }
+    return _run.candidateCount > 0 || _run.previewReady > 0;
+  }
+
   List<CandidateClip> _evaluableClips(List<CandidateClip> clips) {
     return clips.where((clip) {
       final reviewed =
@@ -490,9 +501,6 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
 
   String _stageLabel(String stdout) {
     if (_run.status == 'success' || _run.status == 'success_with_warnings') {
-      if (_run.status == 'success_with_warnings') {
-        return 'A análise falhou parcialmente, mas há cortes prontos.';
-      }
       if (!_run.isRunning &&
           _candidateSummary != null &&
           _readyCandidateCount == 0) {
@@ -505,9 +513,21 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
           return 'Todos os cortes desta busca foram avaliados.';
         }
       }
+      if (_run.status == 'success_with_warnings') {
+        if (_run.warningMessage.trim().isNotEmpty) {
+          return _run.warningMessage.trim();
+        }
+        return 'Encontramos cortes prontos, mas a busca foi encerrada cedo para você avaliar mais rápido.';
+      }
       return 'Previews prontos para revisão.';
     }
     if (_run.status == 'failed') {
+      if (_candidateSummary != null &&
+          _readyCandidateCount == 0 &&
+          _candidateSummary!.pending == 0 &&
+          _candidateSummary!.reviewed > 0) {
+        return 'Todos os cortes desta busca foram avaliados.';
+      }
       if (_hasReadyCandidates) {
         return 'A análise falhou parcialmente, mas há cortes prontos.';
       }
@@ -522,6 +542,10 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         _run.partialPendingReviewableCount > 0 ||
         (_run.isRunning && _hasReadyCandidates)) {
       return 'Já encontramos cortes prontos. A busca continuará em segundo plano.';
+    }
+    final cacheMessage = _cacheStageMessage(stdout);
+    if (cacheMessage.isNotEmpty) {
+      return cacheMessage;
     }
     if (_run.currentVideoIndex != null && (_run.totalVideos ?? 0) > 0) {
       return 'Processando vídeo ${_run.currentVideoIndex} de ${_run.totalVideos}.';
@@ -550,6 +574,26 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
     }
     return raw;
   }
+}
+
+String _cacheStageMessage(String stdout) {
+  if (stdout.contains('[cache_hit] preview')) {
+    return 'Previews já estavam prontos.';
+  }
+  if (stdout.contains('[cache_hit] transcript')) {
+    return 'Transcrição encontrada no cache.';
+  }
+  if (stdout.contains('[step3_cache_hit]') ||
+      stdout.contains('[cache_hit] clips')) {
+    return 'Reaproveitando análise anterior...';
+  }
+  if (stdout.contains('[cache_partial]')) {
+    return 'Processando apenas o que falta.';
+  }
+  if (stdout.contains('[cache_miss]')) {
+    return 'Sem cache completo para este vídeo. Processando normalmente.';
+  }
+  return '';
 }
 
 class _SuccessActions extends StatelessWidget {
@@ -599,7 +643,7 @@ class _SuccessActions extends StatelessWidget {
           ],
           if (partialWarning && !runningPartial) ...[
             const Text(
-              'A análise encontrou cortes antes de finalizar todas as etapas.',
+              'Encontramos cortes prontos, mas a busca foi encerrada cedo para você avaliar mais rápido.',
               textAlign: TextAlign.center,
               style: TextStyle(color: AppColors.warning),
             ),
@@ -990,6 +1034,8 @@ class _FullStatusSheet extends StatelessWidget {
         : run.stderrTail;
     final currentStep = _currentInstrumentedStep(stdout);
     final currentStepDuration = _currentInstrumentedStepDuration(stdout);
+    final processedVideosCount = _processedVideosCount(stdout);
+    final warningStatus = run.status == 'success_with_warnings';
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
@@ -1001,6 +1047,18 @@ class _FullStatusSheet extends StatelessWidget {
               const Text(
                 'Status completo',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 12),
+              _StatusBanner(
+                warning: warningStatus,
+                failed: run.status == 'failed',
+                message: warningStatus
+                    ? 'Busca concluída com avisos'
+                    : run.status == 'failed'
+                    ? 'Busca com falha'
+                    : run.status == 'success'
+                    ? 'Busca concluída'
+                    : 'Busca em andamento',
               ),
               const SizedBox(height: 12),
               _StatusLine(label: 'run_id', value: run.runId),
@@ -1039,6 +1097,21 @@ class _FullStatusSheet extends StatelessWidget {
                 value: currentStepDuration == null
                     ? '-'
                     : '$currentStepDuration',
+              ),
+              _StatusLine(
+                label: 'current_step_detail',
+                value: run.currentStepDetail,
+              ),
+              _StatusLine(
+                label: 'current_video',
+                value:
+                    '${run.currentVideoIndex ?? '-'} / ${run.totalVideos ?? '-'}',
+              ),
+              _StatusLine(
+                label: 'processed_videos_count',
+                value: processedVideosCount == null
+                    ? '-'
+                    : '$processedVideosCount',
               ),
               _StatusLine(label: 'latest_error', value: run.latestError),
               _StatusLine(label: 'warning_message', value: run.warningMessage),
@@ -1114,6 +1187,48 @@ int? _currentInstrumentedStepDuration(String stdout) {
   final started = DateTime.tryParse(match.group(3) ?? '');
   if (started == null) return null;
   return DateTime.now().toUtc().difference(started).inSeconds;
+}
+
+int? _processedVideosCount(String stdout) {
+  final matches = RegExp(
+    r'processed_videos_count:\s*(\d+)',
+  ).allMatches(stdout).toList();
+  if (matches.isEmpty) return null;
+  return int.tryParse(matches.last.group(1) ?? '');
+}
+
+class _StatusBanner extends StatelessWidget {
+  const _StatusBanner({
+    required this.warning,
+    required this.failed,
+    required this.message,
+  });
+
+  final bool warning;
+  final bool failed;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = failed
+        ? AppColors.danger
+        : warning
+        ? AppColors.warning
+        : AppColors.cyan;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Text(
+        message,
+        style: TextStyle(color: color, fontWeight: FontWeight.w800),
+      ),
+    );
+  }
 }
 
 class _StatusLine extends StatelessWidget {
