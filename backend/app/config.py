@@ -102,6 +102,7 @@ STORAGE_CANDIDATE_PREVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "
 STORAGE_CANDIDATE_REVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "candidate_reviews"
 STORAGE_JOB_RUNS_DIR = Path(__file__).resolve().parent / "storage" / "job_runs"
 STORAGE_GENERATION_STATE_DIR = Path(__file__).resolve().parent / "storage" / "generation_state"
+STORAGE_GENERATION_DIR = Path(__file__).resolve().parent / "storage" / "generation"
 STORAGE_REFERENCE_DIR = Path(__file__).resolve().parent / "storage" / "reference"
 
 DEFAULT_BR_FEEDS = [

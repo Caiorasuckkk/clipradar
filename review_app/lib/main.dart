@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'screens/cuts_screen.dart';
+import 'screens/generation_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/more_screen.dart';
 import 'theme/app_colors.dart';
@@ -78,6 +79,10 @@ class _ReviewTabsState extends State<_ReviewTabs> {
     });
   }
 
+  void _openGeneration() {
+    setState(() => _index = 2);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -87,6 +92,8 @@ class _ReviewTabsState extends State<_ReviewTabs> {
           HomeScreen(
             onOpenCandidates: () => _openCuts(CutsSection.review),
             onOpenPosts: () => _openCuts(CutsSection.posts),
+            onOpenAnalytics: () => _openCuts(CutsSection.analytics),
+            onOpenGeneration: _openGeneration,
           ),
           CutsScreen(
             section: _cutsSection,
@@ -94,6 +101,10 @@ class _ReviewTabsState extends State<_ReviewTabs> {
               _cutsSection = section;
             }),
             onOpenHome: () => setState(() => _index = 0),
+          ),
+          GenerationScreen(
+            onOpenCuts: () => _openCuts(CutsSection.review),
+            onOpenAnalytics: () => _openCuts(CutsSection.analytics),
           ),
           MoreScreen(onOpenCandidates: () => _openCuts(CutsSection.review)),
         ],

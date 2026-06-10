@@ -6,9 +6,11 @@ import '../models/ops_status.dart';
 import '../models/posts_summary.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
-import '../widgets/df_action_card.dart';
+import '../widgets/df_button.dart';
+import '../widgets/df_card.dart';
 import '../widgets/df_gradient_card.dart';
 import '../widgets/df_metric_card.dart';
+import '../widgets/df_section_header.dart';
 import '../widgets/df_status_chip.dart';
 import 'processing_screen.dart';
 
@@ -17,10 +19,14 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.onOpenCandidates,
     required this.onOpenPosts,
+    required this.onOpenAnalytics,
+    required this.onOpenGeneration,
   });
 
   final VoidCallback onOpenCandidates;
   final VoidCallback onOpenPosts;
+  final VoidCallback onOpenAnalytics;
+  final VoidCallback onOpenGeneration;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -124,10 +130,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       children: [
                         Text('Bem-vindo de volta', style: AppTextStyles.muted),
                         SizedBox(height: 4),
-                        Text('Olá, Caio', style: AppTextStyles.title),
+                        Text('DarkFlow', style: AppTextStyles.title),
                         SizedBox(height: 4),
                         Text(
-                          'Pronto para analisar novos vídeos?',
+                          'Cortes e geração de shorts em um fluxo local.',
                           style: TextStyle(color: AppColors.secondaryText),
                         ),
                       ],
@@ -152,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     const DfStatusChip(label: 'DarkFlow Local'),
                     const SizedBox(height: 16),
                     const Text(
-                      'Encontre oportunidades de corte',
+                      'Escolha como criar seu próximo short',
                       style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.w900,
@@ -160,7 +166,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Inicie uma nova rodada de vídeos para avaliar cortes e oportunidades virais.',
+                      'Transforme vídeos longos em cortes prontos ou prepare a criação do zero na nova área de Geração.',
                       style: TextStyle(color: AppColors.secondaryText),
                     ),
                     const SizedBox(height: 18),
@@ -220,6 +226,62 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 18),
+              const DfSectionHeader(
+                title: 'Áreas principais',
+                subtitle: 'Comece pelos cortes ou explore a geração do zero.',
+              ),
+              _WorkspaceCard(
+                icon: Icons.movie_filter_rounded,
+                title: 'Cortes',
+                description:
+                    'Transforme vídeos longos em cortes prontos para revisar.',
+                accent: AppColors.cyan,
+                actions: [
+                  DFPrimaryButton(
+                    label: 'Buscar cortes',
+                    icon: Icons.radar_rounded,
+                    onPressed: _starting
+                        ? null
+                        : () => _startAnalysis(deep: false),
+                  ),
+                  DFSecondaryButton(
+                    label: 'Avaliar pendentes',
+                    icon: Icons.swipe_rounded,
+                    onPressed: widget.onOpenCandidates,
+                  ),
+                  DFSecondaryButton(
+                    label: 'Ver analytics',
+                    icon: Icons.query_stats_rounded,
+                    onPressed: widget.onOpenAnalytics,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _WorkspaceCard(
+                icon: Icons.auto_awesome_rounded,
+                title: 'Geração',
+                description:
+                    'Crie shorts narrados do zero com roteiro, voz e visual.',
+                accent: AppColors.purple,
+                actions: [
+                  DFPrimaryButton(
+                    label: 'Gerar ideia',
+                    icon: Icons.lightbulb_rounded,
+                    onPressed: widget.onOpenGeneration,
+                  ),
+                  DFSecondaryButton(
+                    label: 'Criar roteiro',
+                    icon: Icons.edit_note_rounded,
+                    onPressed: widget.onOpenGeneration,
+                  ),
+                  DFSecondaryButton(
+                    label: 'Ver projetos',
+                    icon: Icons.folder_copy_rounded,
+                    onPressed: widget.onOpenGeneration,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
               LayoutBuilder(
                 builder: (context, constraints) {
                   final width = (constraints.maxWidth - 10) / 2;
@@ -259,28 +321,91 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 },
               ),
-              const SizedBox(height: 18),
-              DFActionCard(
-                icon: Icons.swipe_rounded,
-                title: 'Cortes',
-                description:
-                    'Revise cortes para avaliar e acompanhe posts prontos.',
-                buttonLabel: 'Abrir Cortes',
-                onPressed: widget.onOpenCandidates,
-              ),
-              const SizedBox(height: 12),
-              DFActionCard(
-                icon: Icons.publish_rounded,
-                title: 'Postagem manual',
-                description:
-                    'Copie títulos, descrições e hashtags dos vídeos prontos.',
-                buttonLabel: 'Abrir posts',
-                onPressed: widget.onOpenPosts,
-                accent: AppColors.purple,
-              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _WorkspaceCard extends StatelessWidget {
+  const _WorkspaceCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.actions,
+    required this.accent,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final List<Widget> actions;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return DfCard(
+      color: AppColors.surfaceAlt,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(icon, color: accent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: AppTextStyles.cardTitle),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.muted,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth > 430;
+              if (isWide) {
+                return Row(
+                  children: [
+                    for (var index = 0; index < actions.length; index++) ...[
+                      Expanded(child: actions[index]),
+                      if (index < actions.length - 1) const SizedBox(width: 8),
+                    ],
+                  ],
+                );
+              }
+              return Column(
+                children: [
+                  for (var index = 0; index < actions.length; index++) ...[
+                    SizedBox(width: double.infinity, child: actions[index]),
+                    if (index < actions.length - 1) const SizedBox(height: 8),
+                  ],
+                ],
+              );
+            },
+          ),
+        ],
       ),
     );
   }

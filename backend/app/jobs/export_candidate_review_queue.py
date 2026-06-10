@@ -11,6 +11,13 @@ from typing import Any
 
 from app import config
 from app.services.candidate_review_service import QUEUE_PATH, load_candidate_reviews
+from app.services.candidate_quality_ranker_service import (
+    candidate_quality_summary,
+    dedupe_candidates,
+    filter_by_quality,
+    load_candidate_quality_rules,
+    rank_candidate,
+)
 
 
 def main() -> None:
@@ -27,11 +34,16 @@ def main() -> None:
     parser.add_argument("--min-duration", type=float, default=25.0)
     parser.add_argument("--max-duration", type=float, default=120.0)
     parser.add_argument("--quality-threshold", type=float, default=6.0)
+    parser.add_argument("--min-candidate-quality-score", type=float)
+    parser.add_argument("--quality-fallback-limit", type=int, default=3)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--include-quality-report", action="store_true")
     parser.add_argument("--dedup-overlap", type=float, default=0.65)
     args = parser.parse_args()
 
     video_ids = _video_ids(args.video_id)
     reviews = load_candidate_reviews()
+    quality_rules = load_candidate_quality_rules()
     raw_items: list[dict[str, Any]] = []
     for path in sorted(config.STORAGE_CLIPS_DIR.glob("*_clips.json")):
         payload = _load_json(path)
@@ -44,7 +56,7 @@ def main() -> None:
         if args.include_diagnostics:
             raw_items.extend(_items_from_payload(payload, video_id, "diagnostic_candidates", reviews))
 
-    filtered_items = _quality_filter_items(
+    base_filtered_items = _quality_filter_items(
         raw_items,
         min_ranking_score=args.min_ranking_score,
         min_source_score=args.min_source_score,
@@ -52,7 +64,40 @@ def main() -> None:
         max_duration=args.max_duration,
         quality_threshold=args.quality_threshold,
     )
-    deduped_items, duplicates_removed = _dedupe_items(filtered_items, args.dedup_overlap)
+    scored_items = [{**item, **rank_candidate(item, quality_rules)} for item in base_filtered_items]
+    min_candidate_quality = (
+        args.min_candidate_quality_score
+        if args.min_candidate_quality_score is not None
+        else float(quality_rules.get("min_quality_score_deep") if args.no_candidate_limit else quality_rules.get("min_quality_score_fast") or 5.5)
+    )
+    fallback_limit = max(5 if args.no_candidate_limit else 1, args.quality_fallback_limit)
+    filtered_items, quality_stats = filter_by_quality(
+        scored_items,
+        min_score=float(min_candidate_quality),
+        fallback_limit=fallback_limit,
+    )
+    accepted_ids = {str(item.get("candidate_id") or "") for item in filtered_items}
+    for item in filtered_items:
+        print(
+            f"[candidate_quality_accept] candidate_id={item.get('candidate_id')} "
+            f"score={item.get('candidate_quality_score')}"
+        )
+    for item in scored_items:
+        if str(item.get("candidate_id") or "") not in accepted_ids:
+            reason = item.get("candidate_quality_reject_reason") or "low_quality_score"
+            print(
+                f"[candidate_quality_reject] candidate_id={item.get('candidate_id')} "
+                f"score={item.get('candidate_quality_score')} "
+                f"reason={reason}"
+            )
+    if quality_stats.get("quality_fallback_used"):
+        print(
+            "[candidate_quality_fallback] "
+            f"selected={quality_stats.get('quality_fallback_selected_count')} "
+            "reason=no_candidates_after_quality"
+        )
+    deduped_items, dedupe_stats = dedupe_candidates(filtered_items, overlap_threshold=args.dedup_overlap)
+    duplicates_removed = int(dedupe_stats.get("duplicates_removed") or 0)
     items = _limit_per_video(
         deduped_items,
         max_candidates_per_video=args.max_candidates_per_video,
@@ -60,6 +105,7 @@ def main() -> None:
     )
     if args.limit is not None:
         items = items[: max(0, args.limit)]
+    selected_items = list(items)
     stats_by_video = _stats_by_video(
         raw_items,
         filtered_items,
@@ -69,7 +115,7 @@ def main() -> None:
     )
 
     config.STORAGE_CANDIDATE_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
-    existing_payload = _load_json(QUEUE_PATH) if QUEUE_PATH.exists() and not args.overwrite else {}
+    existing_payload = _load_json(QUEUE_PATH) if QUEUE_PATH.exists() and not args.overwrite and not args.dry_run else {}
     existing_items = (
         existing_payload.get("items", [])
         if isinstance(existing_payload, dict) and isinstance(existing_payload.get("items"), list)
@@ -82,6 +128,14 @@ def main() -> None:
         items = _merge_existing_items(existing_items, items)
 
     exported_at = datetime.utcnow().isoformat()
+    quality_summary = candidate_quality_summary(scored_items)
+    tier_counts = {
+        "excellent": quality_summary.get("excellent_count", 0),
+        "good": quality_summary.get("good_count", 0),
+        "average": quality_summary.get("average_count", 0),
+        "weak": quality_summary.get("weak_count", 0),
+        "reject": quality_summary.get("rejected_count", 0),
+    }
     payload = {
         "generated_at": exported_at,
         "exported_at": exported_at,
@@ -94,11 +148,25 @@ def main() -> None:
         "min_duration": args.min_duration,
         "max_duration": args.max_duration,
         "quality_threshold": args.quality_threshold,
+        "min_candidate_quality_score": min_candidate_quality,
         "dedup_overlap": args.dedup_overlap,
         "candidates_raw": len(raw_items),
+        "candidates_before_quality": len(base_filtered_items),
+        "candidates_after_quality": len(filtered_items),
+        "candidates_before_dedupe": len(filtered_items),
         "candidates_after_quality_filter": len(filtered_items),
         "candidates_after_dedup": len(deduped_items),
         "duplicates_removed": duplicates_removed,
+        "duplicates_removed_by_time": dedupe_stats.get("duplicates_removed_by_time", 0),
+        "duplicates_removed_by_text": dedupe_stats.get("duplicates_removed_by_text", 0),
+        "quality_rejected": quality_stats.get("quality_rejected", 0),
+        "hard_rejected": quality_stats.get("hard_rejected", 0),
+        "score_rejected": quality_stats.get("score_rejected", 0),
+        "quality_fallback_used": quality_stats.get("quality_fallback_used", False),
+        "fallback_used": quality_stats.get("fallback_used", False),
+        "quality_fallback_selected_count": quality_stats.get("quality_fallback_selected_count", 0),
+        "candidate_quality": quality_summary,
+        **tier_counts,
         "candidates_dropped_by_quality": max(0, len(raw_items) - len(filtered_items)),
         "candidates_dropped_by_dedupe": duplicates_removed,
         "candidates_dropped_by_limit": max(0, len(deduped_items) - len(items)),
@@ -111,7 +179,8 @@ def main() -> None:
         "stats_by_video": stats_by_video,
         "items": items,
     }
-    _write_json(QUEUE_PATH, payload)
+    if not args.dry_run:
+        _write_json(QUEUE_PATH, payload)
     reports_dir = config.STORAGE_TRENDS_DIR.parent / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -122,9 +191,17 @@ def main() -> None:
 
     print("EXPORT CANDIDATE REVIEW QUEUE")
     print(f"candidates_raw: {len(raw_items)}")
+    print(f"candidates_before_quality: {len(base_filtered_items)}")
+    print(f"candidates_after_quality: {len(filtered_items)}")
     print(f"candidates_after_quality_filter: {len(filtered_items)}")
     print(f"candidates_after_dedup: {len(deduped_items)}")
     print(f"duplicates_removed: {duplicates_removed}")
+    print(f"duplicates_removed_by_time: {payload['duplicates_removed_by_time']}")
+    print(f"duplicates_removed_by_text: {payload['duplicates_removed_by_text']}")
+    print(f"quality_rejected: {payload['quality_rejected']}")
+    print(f"hard_rejected: {payload['hard_rejected']}")
+    print(f"score_rejected: {payload['score_rejected']}")
+    print(f"quality_fallback_used: {payload['quality_fallback_used']}")
     print(f"candidates_dropped_by_quality: {max(0, len(raw_items) - len(filtered_items))}")
     print(f"candidates_dropped_by_dedupe: {duplicates_removed}")
     print(f"candidates_dropped_by_limit: {max(0, len(deduped_items) - len(items))}")
@@ -314,7 +391,9 @@ def _stats_by_video(
                 "video_id": video_id,
                 "title": str((raw[0] if raw else {}).get("video_title") or video_id),
                 "candidates_raw": len(raw),
+                "candidates_before_quality": len(raw),
                 "candidates_after_filter": len(filtered),
+                "candidates_after_quality": len(filtered),
                 "candidates_after_dedup": len(deduped),
                 "candidates_exported": len(final),
                 "duplicates_removed": max(0, len(filtered) - len(deduped)),
@@ -383,6 +462,9 @@ def _markdown_report(payload: dict[str, Any]) -> str:
                 f"Collection: {item['source_collection']}",
                 f"Rank: {item['rank']}",
                 f"Time: {item['start_seconds']} - {item['end_seconds']}",
+                f"Candidate quality: {item.get('candidate_quality_score', item.get('quality_score'))} ({item.get('quality_tier', '')})",
+                f"Positive signals: {', '.join(item.get('positive_signals') or [])}",
+                f"Negative signals: {', '.join(item.get('negative_signals') or [])}",
                 f"Preview: {item['output_preview_filename']}",
                 "",
             ]

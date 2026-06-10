@@ -548,6 +548,38 @@ A duracao minima agora tem tres faixas: rejeicao dura abaixo de 60s, penalidade 
 
 O filtro tambem separa rejeicoes duras e flexiveis, e ativa fallback seguro quando todos os videos sao rejeitados por motivos flexiveis. Analytics mostra `latest_hard_rejected_count`, `latest_soft_rejected_count`, `latest_fallback_used` e `latest_fallback_selected_count`.
 
+## ClipRadar 0.5.43 - Candidate Quality Ranker + Better Clip Selection
+
+O export de candidates agora calcula `candidate_quality_score`, `quality_tier`, sinais positivos/negativos e motivo de rejeicao antes de renderizar previews. A Busca Rapida usa threshold mais alto; a Busca Profunda permite mais exploracao. Dedupe tambem considera tempo e texto normalizado, mantendo o melhor candidate por qualidade.
+
+Regras locais:
+
+```text
+backend/app/storage/config/candidate_quality_rules.json
+```
+
+Comandos:
+
+```powershell
+python -m app.jobs.audit_candidate_quality
+python -m app.jobs.audit_candidate_quality --dry-run
+python -m app.jobs.export_candidate_review_queue --dry-run --include-quality-report --include-diagnostics
+```
+
+Analytics mostra a secao "Qualidade dos cortes" com score medio, tiers, filtrados, duplicatas por texto/tempo e sinais mais comuns.
+
+## ClipRadar 0.5.43.1 - Candidate Quality Calibration
+
+O ranker agora separa rejeicao dura de rejeicao por score. Regras duras bloqueiam trechos muito curtos/longos, texto insuficiente, baixa densidade de fala e frases de propaganda, abertura ou encerramento. O fallback nao recupera candidates com rejeicao dura.
+
+`audit_candidate_quality` mostra distribuicao de score (`min`, `p25`, `p50`, `p75`, `max`), contagem por tier, top 10 e bottom 10 com sinais positivos/negativos. Analytics tambem mostra rejeicoes duras, rejeicoes por score, fallback e mediana no card "Qualidade dos cortes".
+
+```powershell
+python -m app.jobs.audit_candidate_quality
+python -m app.jobs.audit_candidate_quality --dry-run
+python -m app.jobs.pipeline_find_candidates --dry-run --max-videos 10 --include-diagnostics
+```
+
 `batch_status` summarizes candidate queue health, preview availability, review counts, rendered exports, final review counts, the latest posting package, recent reports, and tracked failed downloads. Candidate preview downloads now retry with simple backoff, can clean `.part`/`.ytdl` files for selected videos, and write failures to `backend/app/storage/reports/failed_candidate_downloads.json`. `export_ready_to_post_package --package-name latest` writes a stable `posting_package/latest` folder, while `--clean-old` removes old package folders safely inside `backend/app/storage/posting_package`.
 
 ## ClipRadar 0.5.33 - Local Operations Dashboard + Job Runner API

@@ -86,6 +86,15 @@ def main() -> None:
                 print(result["error_message"])
             print("")
             continue
+        if args.dry_run and step["name"] == "export_candidate_review_queue":
+            dry_step = {**step, "command": [*step["command"], "--dry-run", "--include-quality-report"]}
+            result = _run_step(dry_step)
+            results.append(result)
+            print(f"Status: {result['status'].upper()}")
+            if result.get("error_message"):
+                print(result["error_message"])
+            print("")
+            continue
         elif args.dry_run:
             result = _dry_run_step(step)
             results.append(result)
@@ -157,6 +166,15 @@ def main() -> None:
         "quality_threshold": args.quality_threshold,
         "dedup_overlap": args.dedup_overlap,
         "candidates_raw": queue_payload.get("candidates_raw"),
+        "candidates_before_quality": queue_payload.get("candidates_before_quality"),
+        "candidates_after_quality": queue_payload.get("candidates_after_quality"),
+        "quality_rejected": queue_payload.get("quality_rejected"),
+        "hard_rejected": queue_payload.get("hard_rejected"),
+        "score_rejected": queue_payload.get("score_rejected"),
+        "quality_fallback_used": queue_payload.get("quality_fallback_used"),
+        "fallback_used": queue_payload.get("fallback_used"),
+        "duplicates_removed_by_text": queue_payload.get("duplicates_removed_by_text"),
+        "duplicates_removed_by_time": queue_payload.get("duplicates_removed_by_time"),
         "candidates_after_quality_filter": queue_payload.get("candidates_after_quality_filter"),
         "candidates_after_dedup": queue_payload.get("candidates_after_dedup"),
         "duplicates_removed": queue_payload.get("duplicates_removed"),
@@ -197,6 +215,14 @@ def main() -> None:
     print(f"source_filter_fallback_used: {payload.get('source_filter_fallback_used')}")
     print(f"source_filter_fallback_selected_count: {payload.get('source_filter_fallback_selected_count')}")
     print(f"average_source_relevance_score: {payload.get('average_source_relevance_score')}")
+    print(f"candidates_before_quality: {payload.get('candidates_before_quality')}")
+    print(f"candidates_after_quality: {payload.get('candidates_after_quality')}")
+    print(f"quality_rejected: {payload.get('quality_rejected')}")
+    print(f"hard_rejected: {payload.get('hard_rejected')}")
+    print(f"score_rejected: {payload.get('score_rejected')}")
+    print(f"quality_fallback_used: {payload.get('quality_fallback_used')}")
+    print(f"duplicates_removed_by_text: {payload.get('duplicates_removed_by_text')}")
+    print(f"duplicates_removed_by_time: {payload.get('duplicates_removed_by_time')}")
     print(f"processed_videos_count: {payload['processed_videos_count']}")
     print(f"candidate_count: {payload['candidate_count']}")
     print(f"preview_ready: {payload['preview_ready']}")
@@ -1053,8 +1079,49 @@ def _candidate_queue_payload() -> dict[str, Any]:
         with QUEUE_PATH.open("r", encoding="utf-8") as file:
             payload = json.load(file)
     except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    latest_report = _latest_candidate_queue_report()
+    if latest_report:
+        metric_keys = {
+            "candidates_raw",
+            "candidates_before_quality",
+            "candidates_after_quality",
+            "candidates_before_dedupe",
+            "candidates_after_quality_filter",
+            "candidates_after_dedup",
+            "duplicates_removed",
+            "duplicates_removed_by_time",
+            "duplicates_removed_by_text",
+            "quality_rejected",
+            "hard_rejected",
+            "score_rejected",
+            "quality_fallback_used",
+            "fallback_used",
+            "quality_fallback_selected_count",
+            "candidate_quality",
+            "candidates_dropped_by_quality",
+            "candidates_dropped_by_dedupe",
+            "candidates_dropped_by_limit",
+            "stats_by_video",
+        }
+        payload.update({key: latest_report.get(key) for key in metric_keys if key in latest_report})
+    return payload
+
+
+def _latest_candidate_queue_report() -> dict[str, Any]:
+    reports_dir = config.STORAGE_TRENDS_DIR.parent / "reports"
+    paths = sorted(reports_dir.glob("candidate_review_queue_*.json"), reverse=True)
+    for path in paths:
+        try:
+            with path.open("r", encoding="utf-8") as file:
+                payload = json.load(file)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
 
 
 def _source_metrics() -> dict[str, Any]:
@@ -1152,6 +1219,15 @@ def _finish_pipeline(
         "quality_threshold": args.quality_threshold,
         "dedup_overlap": args.dedup_overlap,
         "candidates_raw": queue_payload.get("candidates_raw"),
+        "candidates_before_quality": queue_payload.get("candidates_before_quality"),
+        "candidates_after_quality": queue_payload.get("candidates_after_quality"),
+        "quality_rejected": queue_payload.get("quality_rejected"),
+        "hard_rejected": queue_payload.get("hard_rejected"),
+        "score_rejected": queue_payload.get("score_rejected"),
+        "quality_fallback_used": queue_payload.get("quality_fallback_used"),
+        "fallback_used": queue_payload.get("fallback_used"),
+        "duplicates_removed_by_text": queue_payload.get("duplicates_removed_by_text"),
+        "duplicates_removed_by_time": queue_payload.get("duplicates_removed_by_time"),
         "candidates_after_quality_filter": queue_payload.get("candidates_after_quality_filter"),
         "candidates_after_dedup": queue_payload.get("candidates_after_dedup"),
         "duplicates_removed": queue_payload.get("duplicates_removed"),
@@ -1201,6 +1277,14 @@ def _finish_pipeline(
     print(f"source_filter_fallback_used: {payload.get('source_filter_fallback_used')}")
     print(f"source_filter_fallback_selected_count: {payload.get('source_filter_fallback_selected_count')}")
     print(f"average_source_relevance_score: {payload.get('average_source_relevance_score')}")
+    print(f"candidates_before_quality: {payload.get('candidates_before_quality')}")
+    print(f"candidates_after_quality: {payload.get('candidates_after_quality')}")
+    print(f"quality_rejected: {payload.get('quality_rejected')}")
+    print(f"hard_rejected: {payload.get('hard_rejected')}")
+    print(f"score_rejected: {payload.get('score_rejected')}")
+    print(f"quality_fallback_used: {payload.get('quality_fallback_used')}")
+    print(f"duplicates_removed_by_text: {payload.get('duplicates_removed_by_text')}")
+    print(f"duplicates_removed_by_time: {payload.get('duplicates_removed_by_time')}")
     print(f"processed_videos_count: {payload['processed_videos_count']}")
     print(f"candidate_count: {payload['candidate_count']}")
     print(f"preview_ready: {payload['preview_ready']}")
@@ -1262,6 +1346,14 @@ def _markdown_report(payload: dict[str, Any]) -> str:
         f"Average source relevance score: {payload.get('average_source_relevance_score')}",
         f"Candidates: {payload['candidate_count']}",
         f"Candidates raw: {payload.get('candidates_raw')}",
+        f"Candidates before quality: {payload.get('candidates_before_quality')}",
+        f"Candidates after quality: {payload.get('candidates_after_quality')}",
+        f"Quality rejected: {payload.get('quality_rejected')}",
+        f"Hard rejected: {payload.get('hard_rejected')}",
+        f"Score rejected: {payload.get('score_rejected')}",
+        f"Quality fallback used: {payload.get('quality_fallback_used')}",
+        f"Duplicates removed by text: {payload.get('duplicates_removed_by_text')}",
+        f"Duplicates removed by time: {payload.get('duplicates_removed_by_time')}",
         f"After quality filter: {payload.get('candidates_after_quality_filter')}",
         f"After dedupe: {payload.get('candidates_after_dedup')}",
         f"Duplicates removed: {payload.get('duplicates_removed')}",

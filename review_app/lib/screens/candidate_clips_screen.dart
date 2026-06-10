@@ -1085,8 +1085,19 @@ class _CandidateDetailsSheet extends StatelessWidget {
               _DetailLine(label: 'score', value: _scoreLabel(clip)),
               _DetailLine(
                 label: 'quality',
-                value: _numberLabel(clip.qualityScore),
+                value: '${_numberLabel(clip.qualityScore)} ${clip.qualityTier}'
+                    .trim(),
               ),
+              if (clip.positiveSignals.isNotEmpty)
+                _DetailLine(
+                  label: 'sinais positivos',
+                  value: clip.positiveSignals.take(2).join(', '),
+                ),
+              if (clip.negativeSignals.isNotEmpty)
+                _DetailLine(
+                  label: 'sinais negativos',
+                  value: clip.negativeSignals.take(2).join(', '),
+                ),
               _DetailLine(
                 label: 'ranking',
                 value:

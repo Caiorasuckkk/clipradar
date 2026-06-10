@@ -11,6 +11,9 @@ class CandidateClip {
     required this.reason,
     required this.score,
     required this.qualityScore,
+    required this.qualityTier,
+    required this.positiveSignals,
+    required this.negativeSignals,
     required this.rankingQualityScore,
     required this.rankingQualityTier,
     required this.sourceQualityScore,
@@ -38,6 +41,9 @@ class CandidateClip {
   final String reason;
   final num? score;
   final num? qualityScore;
+  final String qualityTier;
+  final List<String> positiveSignals;
+  final List<String> negativeSignals;
   final num? rankingQualityScore;
   final String rankingQualityTier;
   final num? sourceQualityScore;
@@ -69,6 +75,9 @@ class CandidateClip {
       reason: reason,
       score: score,
       qualityScore: qualityScore,
+      qualityTier: qualityTier,
+      positiveSignals: positiveSignals,
+      negativeSignals: negativeSignals,
       rankingQualityScore: rankingQualityScore,
       rankingQualityTier: rankingQualityTier,
       sourceQualityScore: sourceQualityScore,
@@ -99,7 +108,17 @@ class CandidateClip {
       durationSeconds: _num(json['duration_seconds']),
       reason: _string(json['reason']),
       score: _num(json['score']),
-      qualityScore: _num(json['quality_score']),
+      qualityScore:
+          _num(json['candidate_quality_score']) ?? _num(json['quality_score']),
+      qualityTier: _string(json['quality_tier']).isNotEmpty
+          ? _string(json['quality_tier'])
+          : _string(json['candidate_quality_tier']),
+      positiveSignals: _stringList(
+        json['positive_signals'] ?? json['quality_positive_signals'],
+      ),
+      negativeSignals: _stringList(
+        json['negative_signals'] ?? json['quality_negative_signals'],
+      ),
       rankingQualityScore: _num(json['ranking_quality_score']),
       rankingQualityTier: _string(json['ranking_quality_tier']),
       sourceQualityScore: _num(json['source_quality_score']),
@@ -136,6 +155,11 @@ class CandidateClip {
       value is num ? value : num.tryParse(value?.toString() ?? '');
   static int? _int(Object? value) =>
       value is int ? value : int.tryParse(value?.toString() ?? '');
+
+  static List<String> _stringList(Object? value) {
+    if (value is! List) return const [];
+    return value.map((item) => item.toString()).toList();
+  }
 
   static String _riskLabel(Map<String, dynamic> json) {
     for (final key in const [

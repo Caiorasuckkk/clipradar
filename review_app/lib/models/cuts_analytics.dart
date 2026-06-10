@@ -6,6 +6,7 @@ class CutsAnalytics {
     required this.jobs,
     required this.cache,
     required this.sourceIntelligence,
+    required this.candidateQuality,
   });
 
   final CutsAnalyticsOverview overview;
@@ -14,6 +15,7 @@ class CutsAnalytics {
   final CutsAnalyticsJobs jobs;
   final CutsAnalyticsCache cache;
   final CutsAnalyticsSourceIntelligence sourceIntelligence;
+  final CutsAnalyticsCandidateQuality candidateQuality;
 
   factory CutsAnalytics.fromJson(Map<String, dynamic> json) {
     return CutsAnalytics(
@@ -28,6 +30,9 @@ class CutsAnalytics {
       cache: CutsAnalyticsCache.fromJson(_map(json['cache'])),
       sourceIntelligence: CutsAnalyticsSourceIntelligence.fromJson(
         _map(json['source_intelligence']),
+      ),
+      candidateQuality: CutsAnalyticsCandidateQuality.fromJson(
+        _map(json['candidate_quality']),
       ),
     );
   }
@@ -409,6 +414,96 @@ class CutsAnalyticsSourceIntelligence {
       bestChannelsByApprovalRate: _list(json['best_channels_by_approval_rate']),
       bestQueriesByApprovalRate: _list(json['best_queries_by_approval_rate']),
       worstRejectionReasons: _list(json['worst_rejection_reasons']),
+    );
+  }
+}
+
+class CutsAnalyticsCandidateQuality {
+  const CutsAnalyticsCandidateQuality({
+    required this.totalScored,
+    required this.excellentCount,
+    required this.goodCount,
+    required this.averageCount,
+    required this.weakCount,
+    required this.rejectedCount,
+    required this.averageQualityScore,
+    required this.latestCandidatesBeforeQuality,
+    required this.latestCandidatesAfterQuality,
+    required this.latestQualityRejected,
+    required this.latestHardRejected,
+    required this.latestScoreRejected,
+    required this.latestQualityFallbackUsed,
+    required this.latestScoreMin,
+    required this.latestScoreP50,
+    required this.latestScoreP75,
+    required this.latestScoreMax,
+    required this.latestDuplicatesRemovedByText,
+    required this.latestDuplicatesRemovedByTime,
+    required this.topPositiveSignals,
+    required this.topNegativeSignals,
+    required this.latestTopPositiveSignals,
+    required this.latestBottomNegativeSignals,
+  });
+
+  final int totalScored;
+  final int excellentCount;
+  final int goodCount;
+  final int averageCount;
+  final int weakCount;
+  final int rejectedCount;
+  final num averageQualityScore;
+  final int latestCandidatesBeforeQuality;
+  final int latestCandidatesAfterQuality;
+  final int latestQualityRejected;
+  final int latestHardRejected;
+  final int latestScoreRejected;
+  final bool latestQualityFallbackUsed;
+  final num? latestScoreMin;
+  final num? latestScoreP50;
+  final num? latestScoreP75;
+  final num? latestScoreMax;
+  final int latestDuplicatesRemovedByText;
+  final int latestDuplicatesRemovedByTime;
+  final List<Map<String, dynamic>> topPositiveSignals;
+  final List<Map<String, dynamic>> topNegativeSignals;
+  final List<Map<String, dynamic>> latestTopPositiveSignals;
+  final List<Map<String, dynamic>> latestBottomNegativeSignals;
+
+  factory CutsAnalyticsCandidateQuality.fromJson(Map<String, dynamic> json) {
+    return CutsAnalyticsCandidateQuality(
+      totalScored: _int(json['total_scored']),
+      excellentCount: _int(json['excellent_count']),
+      goodCount: _int(json['good_count']),
+      averageCount: _int(json['average_count']),
+      weakCount: _int(json['weak_count']),
+      rejectedCount: _int(json['rejected_count']),
+      averageQualityScore: _num(json['average_quality_score']) ?? 0,
+      latestCandidatesBeforeQuality: _int(
+        json['latest_candidates_before_quality'],
+      ),
+      latestCandidatesAfterQuality: _int(
+        json['latest_candidates_after_quality'],
+      ),
+      latestQualityRejected: _int(json['latest_quality_rejected']),
+      latestHardRejected: _int(json['latest_hard_rejected']),
+      latestScoreRejected: _int(json['latest_score_rejected']),
+      latestQualityFallbackUsed: _bool(json['latest_quality_fallback_used']),
+      latestScoreMin: _num(json['latest_score_min']),
+      latestScoreP50: _num(json['latest_score_p50']),
+      latestScoreP75: _num(json['latest_score_p75']),
+      latestScoreMax: _num(json['latest_score_max']),
+      latestDuplicatesRemovedByText: _int(
+        json['latest_duplicates_removed_by_text'],
+      ),
+      latestDuplicatesRemovedByTime: _int(
+        json['latest_duplicates_removed_by_time'],
+      ),
+      topPositiveSignals: _list(json['top_positive_signals']),
+      topNegativeSignals: _list(json['top_negative_signals']),
+      latestTopPositiveSignals: _list(json['latest_top_positive_signals']),
+      latestBottomNegativeSignals: _list(
+        json['latest_bottom_negative_signals'],
+      ),
     );
   }
 }

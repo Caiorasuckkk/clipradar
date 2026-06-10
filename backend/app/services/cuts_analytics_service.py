@@ -10,6 +10,7 @@ from typing import Any
 from app import config
 from app.services.cache_manifest_service import cache_summary
 from app.services.candidate_review_service import load_candidate_queue
+from app.services.candidate_quality_ranker_service import candidate_quality_summary
 from app.services.post_metadata_service import load_posts, posts_summary
 from app.services.source_intelligence_service import source_intelligence_summary
 
@@ -27,6 +28,7 @@ def build_cuts_analytics() -> dict[str, Any]:
         "jobs": _jobs(),
         "cache": cache_summary(),
         "source_intelligence": source_intelligence_summary(),
+        "candidate_quality": _candidate_quality(candidates),
     }
 
 
@@ -184,6 +186,40 @@ def _jobs() -> dict[str, Any]:
         "latest_search_pending_reviewable_count": latest_payload.get("pending_reviewable_count", 0),
         "latest_search_next_action": latest_payload.get("next_action", ""),
     }
+
+
+def _candidate_quality(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    summary = candidate_quality_summary(candidates)
+    latest = _latest_candidate_queue_report()
+    latest_quality = latest.get("candidate_quality") if isinstance(latest.get("candidate_quality"), dict) else {}
+    return {
+        **summary,
+        "latest_candidates_before_quality": _int(latest.get("candidates_before_quality")),
+        "latest_candidates_after_quality": _int(latest.get("candidates_after_quality")),
+        "latest_quality_rejected": _int(latest.get("quality_rejected")),
+        "latest_hard_rejected": _int(latest.get("hard_rejected")),
+        "latest_score_rejected": _int(latest.get("score_rejected")),
+        "latest_quality_fallback_used": bool(latest.get("quality_fallback_used")),
+        "latest_fallback_used": bool(latest.get("fallback_used") or latest.get("quality_fallback_used")),
+        "latest_duplicates_removed_by_text": _int(latest.get("duplicates_removed_by_text")),
+        "latest_duplicates_removed_by_time": _int(latest.get("duplicates_removed_by_time")),
+        "latest_score_min": _float(latest_quality.get("score_min")),
+        "latest_score_p50": _float(latest_quality.get("score_p50")),
+        "latest_score_p75": _float(latest_quality.get("score_p75")),
+        "latest_score_max": _float(latest_quality.get("score_max")),
+        "latest_top_positive_signals": latest_quality.get("top_positive_signals") or [],
+        "latest_bottom_negative_signals": latest_quality.get("bottom_negative_signals") or [],
+    }
+
+
+def _latest_candidate_queue_report() -> dict[str, Any]:
+    reports_dir = config.STORAGE_TRENDS_DIR.parent / "reports"
+    paths = sorted(reports_dir.glob("candidate_review_queue_*.json"), reverse=True)
+    for path in paths:
+        payload = _load_json(path)
+        if isinstance(payload, dict):
+            return payload
+    return {}
 
 
 def _latest_search_payload(run: dict[str, Any]) -> dict[str, Any]:

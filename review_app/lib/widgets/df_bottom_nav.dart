@@ -26,6 +26,10 @@ class DFBottomNav extends StatelessWidget {
           label: 'Cortes',
         ),
         NavigationDestination(
+          icon: Icon(Icons.auto_awesome_rounded),
+          label: 'Geração',
+        ),
+        NavigationDestination(
           icon: Icon(Icons.more_horiz_rounded),
           label: 'Mais',
         ),

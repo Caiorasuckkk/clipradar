@@ -6,6 +6,7 @@ import '../models/review_clip.dart';
 import '../models/review_summary.dart';
 import '../models/final_clip.dart';
 import '../models/final_summary.dart';
+import '../models/generation_project.dart';
 import '../models/job_run.dart';
 import '../models/ops_status.dart';
 import '../models/candidate_clip.dart';
@@ -33,6 +34,8 @@ class ApiClient {
       '$baseUrl/candidate_previews/$filename';
   String postingPackageVideoUrl(String filename) =>
       '$baseUrl/posting_package/latest/videos/$filename';
+  String generationVoiceAudioUrl(String projectId) =>
+      '$baseUrl/generation/projects/$projectId/voice/audio';
 
   Future<List<ReviewClip>> fetchClips({String status = 'all'}) async {
     final response = await _client.get(
@@ -210,6 +213,135 @@ class ApiClient {
     _throwIfBad(response);
     await Future<void>.delayed(const Duration(milliseconds: 150));
     return fetchApprovedGenerationStatus();
+  }
+
+  Future<List<GenerationIdea>> generateIdeas({
+    required String niche,
+    required String topic,
+    required String language,
+    required String tone,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/ideas'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'niche': niche,
+        'topic': topic,
+        'language': language,
+        'tone': tone,
+      }),
+    );
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return (payload['ideas'] as List<dynamic>? ?? [])
+        .map((item) => GenerationIdea.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<GenerationScript> generateScript({
+    required String idea,
+    required String niche,
+    required int durationSeconds,
+    required String tone,
+    required String language,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/scripts'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'idea': idea,
+        'niche': niche,
+        'duration_seconds': durationSeconds,
+        'tone': tone,
+        'language': language,
+      }),
+    );
+    _throwIfBad(response);
+    return GenerationScript.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<GenerationProject>> getGenerationProjects() async {
+    final response = await _client.get(_uri('/generation/projects'));
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return (payload['projects'] as List<dynamic>? ?? [])
+        .map((item) => GenerationProject.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<GenerationProject> createGenerationProject(
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _client.post(
+      _uri('/generation/projects'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(payload),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> updateGenerationProject({
+    required String projectId,
+    required Map<String, dynamic> payload,
+  }) async {
+    final response = await _client.put(
+      _uri('/generation/projects/$projectId'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(payload),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> deleteGenerationProject(String projectId) async {
+    final response = await _client.delete(
+      _uri('/generation/projects/$projectId'),
+    );
+    _throwIfBad(response);
+  }
+
+  Future<GenerationVoicesResponse> getGenerationVoices() async {
+    final response = await _client.get(_uri('/generation/voices'));
+    _throwIfBad(response);
+    return GenerationVoicesResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> generateProjectVoice({
+    required String projectId,
+    required String voice,
+    required String rate,
+    required String pitch,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/voice'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'voice': voice, 'rate': rate, 'pitch': pitch}),
+    );
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return GenerationProject.fromJson(
+      payload['project'] as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> deleteProjectVoice(String projectId) async {
+    final response = await _client.delete(
+      _uri('/generation/projects/$projectId/voice'),
+    );
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return GenerationProject.fromJson(
+      payload['project'] as Map<String, dynamic>,
+    );
   }
 
   Future<OpsStatus> fetchOpsStatus() async {

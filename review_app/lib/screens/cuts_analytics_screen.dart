@@ -81,6 +81,8 @@ class _CutsAnalyticsScreenState extends State<CutsAnalyticsScreen> {
           const SizedBox(height: 12),
           _SourceQualityCard(source: analytics.sourceIntelligence),
           const SizedBox(height: 12),
+          _CandidateQualityCard(quality: analytics.candidateQuality),
+          const SizedBox(height: 12),
           _ReasonsCard(overview: analytics.overview),
           const SizedBox(height: 12),
           _TopVideosCard(videos: analytics.byVideo.take(8).toList()),
@@ -286,6 +288,104 @@ class _SourceQualityCard extends StatelessWidget {
                 trailing: _percent(rate),
               );
             }),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CandidateQualityCard extends StatelessWidget {
+  const _CandidateQualityCard({required this.quality});
+
+  final CutsAnalyticsCandidateQuality quality;
+
+  @override
+  Widget build(BuildContext context) {
+    final positives = quality.latestTopPositiveSignals.isNotEmpty
+        ? quality.latestTopPositiveSignals
+        : quality.topPositiveSignals;
+    final negatives = quality.latestBottomNegativeSignals.isNotEmpty
+        ? quality.latestBottomNegativeSignals
+        : quality.topNegativeSignals;
+    return DfCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _CardTitle(
+            icon: Icons.workspace_premium_rounded,
+            title: 'Qualidade dos cortes',
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _ChipMetric(
+                label: 'score médio',
+                value: quality.averageQualityScore.toStringAsFixed(1),
+              ),
+              _ChipMetric(
+                label: 'mediana',
+                value: _score(quality.latestScoreP50),
+              ),
+              _ChipMetric(label: 'p75', value: _score(quality.latestScoreP75)),
+              _ChipMetric(
+                label: 'excelentes',
+                value: '${quality.excellentCount}',
+              ),
+              _ChipMetric(label: 'bons', value: '${quality.goodCount}'),
+              _ChipMetric(label: 'fracos', value: '${quality.weakCount}'),
+              _ChipMetric(
+                label: 'rejeitados',
+                value: '${quality.rejectedCount}',
+              ),
+              _ChipMetric(
+                label: 'filtrados',
+                value: '${quality.latestQualityRejected}',
+              ),
+              _ChipMetric(
+                label: 'rejeição dura',
+                value: '${quality.latestHardRejected}',
+              ),
+              _ChipMetric(
+                label: 'rejeição score',
+                value: '${quality.latestScoreRejected}',
+              ),
+              _ChipMetric(
+                label: 'dup texto',
+                value: '${quality.latestDuplicatesRemovedByText}',
+              ),
+              _ChipMetric(
+                label: 'dup tempo',
+                value: '${quality.latestDuplicatesRemovedByTime}',
+              ),
+              _ChipMetric(
+                label: 'fallback',
+                value: quality.latestQualityFallbackUsed ? 'sim' : 'não',
+              ),
+            ],
+          ),
+          if (positives.isNotEmpty || negatives.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ...positives.take(4).map((item) {
+                  return _ChipMetric(
+                    label: '${item['signal'] ?? '-'}',
+                    value: '${item['count'] ?? 0}',
+                  );
+                }),
+                ...negatives.take(4).map((item) {
+                  return _ChipMetric(
+                    label: '${item['signal'] ?? '-'}',
+                    value: '${item['count'] ?? 0}',
+                  );
+                }),
+              ],
+            ),
           ],
         ],
       ),

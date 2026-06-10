@@ -6,6 +6,7 @@ import '../theme/app_text_styles.dart';
 import '../widgets/df_action_card.dart';
 import '../widgets/df_button.dart';
 import '../widgets/df_card.dart';
+import '../widgets/df_section_header.dart';
 import 'final_clips_screen.dart';
 import 'operations_screen.dart';
 
@@ -84,10 +85,14 @@ class _MoreScreenState extends State<MoreScreen> {
             const Text('Mais', style: AppTextStyles.title),
             const SizedBox(height: 4),
             const Text(
-              'Operações avançadas, histórico e configurações futuras.',
+              'Configurações, manutenção e áreas técnicas do DarkFlow.',
               style: TextStyle(color: AppColors.secondaryText),
             ),
             const SizedBox(height: 18),
+            const DfSectionHeader(
+              title: 'Cortes',
+              subtitle: 'Ferramentas avançadas para finais, cache e operações.',
+            ),
             _GenerationStatusCard(
               status: _generationStatus,
               loading: _loadingGeneration,
@@ -128,6 +133,34 @@ class _MoreScreenState extends State<MoreScreen> {
               ),
             ),
             const SizedBox(height: 12),
+            const DfSectionHeader(
+              title: 'Configurações',
+              subtitle: 'Preparando controles para as próximas fases.',
+            ),
+            const DfCard(
+              child: _FutureItem(
+                icon: Icons.source_rounded,
+                title: 'Fontes',
+                subtitle: 'Em breve: canais, consultas e bloqueios.',
+              ),
+            ),
+            const SizedBox(height: 12),
+            const DfCard(
+              child: _FutureItem(
+                icon: Icons.cached_rounded,
+                title: 'Cache e armazenamento',
+                subtitle: 'Em breve: limpeza fina e limites locais.',
+              ),
+            ),
+            const SizedBox(height: 12),
+            const DfCard(
+              child: _FutureItem(
+                icon: Icons.filter_alt_rounded,
+                title: 'Qualidade e filtros',
+                subtitle: 'Em breve: presets de score e seleção.',
+              ),
+            ),
+            const SizedBox(height: 12),
             const DfCard(
               child: _FutureItem(
                 icon: Icons.history_rounded,
@@ -138,17 +171,9 @@ class _MoreScreenState extends State<MoreScreen> {
             const SizedBox(height: 12),
             const DfCard(
               child: _FutureItem(
-                icon: Icons.person_rounded,
-                title: 'Perfil',
-                subtitle: 'Em breve: preferências do operador local.',
-              ),
-            ),
-            const SizedBox(height: 12),
-            const DfCard(
-              child: _FutureItem(
-                icon: Icons.settings_rounded,
-                title: 'Configurações',
-                subtitle: 'Em breve: presets de análise e postagem.',
+                icon: Icons.info_outline_rounded,
+                title: 'Sobre o DarkFlow',
+                subtitle: 'MVP local para Cortes agora e Geração em breve.',
               ),
             ),
           ],
@@ -192,7 +217,7 @@ class _GenerationStatusCard extends StatelessWidget {
               const SizedBox(width: 10),
               const Expanded(
                 child: Text(
-                  'Geração automática',
+                  'Finais automáticos',
                   style: TextStyle(fontWeight: FontWeight.w900),
                 ),
               ),
