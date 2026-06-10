@@ -524,6 +524,30 @@ python -m app.jobs.process_queue --video-id=Pu2GGvrDK_w --cache-check-only
 
 Esses jobs nao usam OpenAI, nao chamam Whisper, nao baixam videos e nao publicam. A Busca Profunda continua podendo reaproveitar transcripts, clips e previews existentes quando `--overwrite` nao for usado, e os relatorios/Analytics passam a mostrar hits, parciais, bypass, duplicatas, orfaos e aprovados sem final.
 
+## ClipRadar 0.5.42 - Source Intelligence + Relevance Filter
+
+Source Intelligence pontua videos descobertos antes de qualquer download, Whisper ou render pesado. As regras ficam em:
+
+```text
+backend/app/storage/config/source_rules.json
+```
+
+Comandos:
+
+```powershell
+python -m app.jobs.audit_source_quality
+python -m app.jobs.pipeline_find_candidates --dry-run --max-videos 10 --include-diagnostics
+python -m app.jobs.test_cache_reuse --limit 5 --only-ready --dry-run
+```
+
+O filtro prioriza podcasts, entrevistas, debates, opiniao, analise, desafios reais e formatos com fala humana. Ele rejeita shorts, trailers, teasers, gameplays, clipes musicais, videos curtos demais, duplicatas e videos processados recentemente sem necessidade. O relatorio `source_intelligence_*.json/.md` mostra encontrados, aceitos, rejeitados por motivo, score medio e videos selecionados.
+
+## ClipRadar 0.5.42.1 - Source Filter Calibration
+
+A duracao minima agora tem tres faixas: rejeicao dura abaixo de 60s, penalidade forte entre 60s e 180s, e penalidade leve entre 180s e 480s. Falta de palavra-chave cortavel deixou de ser bloqueio duro e passou a entrar no score final.
+
+O filtro tambem separa rejeicoes duras e flexiveis, e ativa fallback seguro quando todos os videos sao rejeitados por motivos flexiveis. Analytics mostra `latest_hard_rejected_count`, `latest_soft_rejected_count`, `latest_fallback_used` e `latest_fallback_selected_count`.
+
 `batch_status` summarizes candidate queue health, preview availability, review counts, rendered exports, final review counts, the latest posting package, recent reports, and tracked failed downloads. Candidate preview downloads now retry with simple backoff, can clean `.part`/`.ytdl` files for selected videos, and write failures to `backend/app/storage/reports/failed_candidate_downloads.json`. `export_ready_to_post_package --package-name latest` writes a stable `posting_package/latest` folder, while `--clean-old` removes old package folders safely inside `backend/app/storage/posting_package`.
 
 ## ClipRadar 0.5.33 - Local Operations Dashboard + Job Runner API

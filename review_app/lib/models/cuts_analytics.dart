@@ -5,6 +5,7 @@ class CutsAnalytics {
     required this.bySource,
     required this.jobs,
     required this.cache,
+    required this.sourceIntelligence,
   });
 
   final CutsAnalyticsOverview overview;
@@ -12,6 +13,7 @@ class CutsAnalytics {
   final List<CutsAnalyticsSource> bySource;
   final CutsAnalyticsJobs jobs;
   final CutsAnalyticsCache cache;
+  final CutsAnalyticsSourceIntelligence sourceIntelligence;
 
   factory CutsAnalytics.fromJson(Map<String, dynamic> json) {
     return CutsAnalytics(
@@ -24,6 +26,9 @@ class CutsAnalytics {
       ).map(CutsAnalyticsSource.fromJson).toList(),
       jobs: CutsAnalyticsJobs.fromJson(_map(json['jobs'])),
       cache: CutsAnalyticsCache.fromJson(_map(json['cache'])),
+      sourceIntelligence: CutsAnalyticsSourceIntelligence.fromJson(
+        _map(json['source_intelligence']),
+      ),
     );
   }
 }
@@ -358,6 +363,56 @@ class CutsAnalyticsCache {
   }
 }
 
+class CutsAnalyticsSourceIntelligence {
+  const CutsAnalyticsSourceIntelligence({
+    required this.latestDiscoveredCount,
+    required this.latestAcceptedCount,
+    required this.latestRejectedCount,
+    required this.latestHardRejectedCount,
+    required this.latestSoftRejectedCount,
+    required this.latestFallbackUsed,
+    required this.latestFallbackSelectedCount,
+    required this.latestRejectedByReason,
+    required this.latestAverageSourceScore,
+    required this.latestSelectedVideoIds,
+    required this.bestChannelsByApprovalRate,
+    required this.bestQueriesByApprovalRate,
+    required this.worstRejectionReasons,
+  });
+
+  final int latestDiscoveredCount;
+  final int latestAcceptedCount;
+  final int latestRejectedCount;
+  final int latestHardRejectedCount;
+  final int latestSoftRejectedCount;
+  final bool latestFallbackUsed;
+  final int latestFallbackSelectedCount;
+  final Map<String, int> latestRejectedByReason;
+  final num latestAverageSourceScore;
+  final List<String> latestSelectedVideoIds;
+  final List<Map<String, dynamic>> bestChannelsByApprovalRate;
+  final List<Map<String, dynamic>> bestQueriesByApprovalRate;
+  final List<Map<String, dynamic>> worstRejectionReasons;
+
+  factory CutsAnalyticsSourceIntelligence.fromJson(Map<String, dynamic> json) {
+    return CutsAnalyticsSourceIntelligence(
+      latestDiscoveredCount: _int(json['latest_discovered_count']),
+      latestAcceptedCount: _int(json['latest_accepted_count']),
+      latestRejectedCount: _int(json['latest_rejected_count']),
+      latestHardRejectedCount: _int(json['latest_hard_rejected_count']),
+      latestSoftRejectedCount: _int(json['latest_soft_rejected_count']),
+      latestFallbackUsed: _bool(json['latest_fallback_used']),
+      latestFallbackSelectedCount: _int(json['latest_fallback_selected_count']),
+      latestRejectedByReason: _intMap(json['latest_rejected_by_reason']),
+      latestAverageSourceScore: _num(json['latest_average_source_score']) ?? 0,
+      latestSelectedVideoIds: _stringList(json['latest_selected_video_ids']),
+      bestChannelsByApprovalRate: _list(json['best_channels_by_approval_rate']),
+      bestQueriesByApprovalRate: _list(json['best_queries_by_approval_rate']),
+      worstRejectionReasons: _list(json['worst_rejection_reasons']),
+    );
+  }
+}
+
 Map<String, dynamic> _map(Object? value) {
   if (value is Map<String, dynamic>) return value;
   if (value is Map) return value.map((key, item) => MapEntry('$key', item));
@@ -367,6 +422,11 @@ Map<String, dynamic> _map(Object? value) {
 List<Map<String, dynamic>> _list(Object? value) {
   if (value is! List) return const [];
   return value.map(_map).toList();
+}
+
+List<String> _stringList(Object? value) {
+  if (value is! List) return const [];
+  return value.map((item) => item.toString()).toList();
 }
 
 Map<String, int> _intMap(Object? value) {
@@ -383,6 +443,12 @@ int _int(Object? value) {
 }
 
 double _double(Object? value) => _num(value)?.toDouble() ?? 0;
+
+bool _bool(Object? value) {
+  if (value is bool) return value;
+  final text = value?.toString().toLowerCase();
+  return text == 'true' || text == '1' || text == 'yes';
+}
 
 num? _num(Object? value) {
   if (value is num) return value;

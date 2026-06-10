@@ -11,6 +11,7 @@ from app import config
 from app.services.cache_manifest_service import cache_summary
 from app.services.candidate_review_service import load_candidate_queue
 from app.services.post_metadata_service import load_posts, posts_summary
+from app.services.source_intelligence_service import source_intelligence_summary
 
 
 def build_cuts_analytics() -> dict[str, Any]:
@@ -25,6 +26,7 @@ def build_cuts_analytics() -> dict[str, Any]:
         "by_source": _by_source(candidates),
         "jobs": _jobs(),
         "cache": cache_summary(),
+        "source_intelligence": source_intelligence_summary(),
     }
 
 

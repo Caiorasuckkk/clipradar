@@ -9,7 +9,10 @@ from datetime import UTC, datetime, timedelta
 from math import log10
 from typing import Any
 
-import isodate
+try:
+    import isodate
+except ModuleNotFoundError:
+    isodate = None
 from googleapiclient.discovery import build
 
 from app import config
@@ -22,6 +25,11 @@ from app.scanners.youtube_errors import (
     sanitize_youtube_error,
 )
 from app.services.processing_priority_service import ProcessingPriorityService
+from app.services.source_intelligence_service import (
+    evaluate_source_video,
+    load_source_rules,
+    write_source_intelligence_report,
+)
 from app.services.video_history_service import VideoHistoryService
 
 
@@ -180,6 +188,10 @@ def main() -> None:
     configure_output()
     parser = argparse.ArgumentParser()
     parser.add_argument("--force-discovery", action="store_true")
+    parser.add_argument("--allow-recent-reprocess", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--minimum-source-score", type=float)
+    parser.add_argument("--fallback-limit", type=int, default=1)
     args = parser.parse_args()
 
     if not config.PODCAST_DISCOVERY_ENABLED:
@@ -189,6 +201,7 @@ def main() -> None:
     history = VideoHistoryService()
     history_data = history._read()
     priority = ProcessingPriorityService()
+    source_rules = load_source_rules()
     key_manager = KeyRotationManager(config.YOUTUBE_API_KEYS_LIST)
     if not key_manager.current_key():
         print("YouTube API key ausente. Discovery não executado.")
@@ -205,6 +218,7 @@ def main() -> None:
     published_after = datetime.now(UTC) - timedelta(days=config.PODCAST_DISCOVERY_DAYS_BACK)
     found: dict[str, dict[str, Any]] = {}
     rejected: list[dict[str, Any]] = []
+    soft_rejected: list[dict[str, Any]] = []
     errors: list[str] = []
 
     for market, query in queries:
@@ -217,6 +231,30 @@ def main() -> None:
             if youtube_errors.QUOTA_EXHAUSTED:
                 break
         for video in videos:
+            if video["video_id"] in found:
+                rejected.append({**video, "reason": "duplicate_video", "source_filter_reason": "duplicate_video"})
+                print(f"[source_filter_reject] video_id={video['video_id']} reason=duplicate_video")
+                continue
+            source_result = evaluate_source_video(
+                video,
+                history_data=history_data,
+                seen_video_ids=set(found),
+                allow_recent_reprocess=args.force_discovery or args.allow_recent_reprocess,
+                rules=source_rules,
+                minimum_score=args.minimum_source_score,
+            )
+            video.update(source_result)
+            if not video.get("source_filter_accepted"):
+                reason = str(video.get("source_filter_reason") or "low_relevance_score")
+                rejected.append({**video, "reason": reason})
+                if not video.get("source_filter_hard_reject"):
+                    soft_rejected.append(video)
+                print(f"[source_filter_reject] video_id={video['video_id']} reason={reason}")
+                continue
+            print(
+                f"[source_filter_accept] video_id={video['video_id']} "
+                f"score={video.get('source_relevance_score')}"
+            )
             block_reason = _discovery_block_reason(
                 video["video_id"],
                 video,
@@ -228,6 +266,51 @@ def main() -> None:
                 continue
             found.setdefault(video["video_id"], video)
 
+    if args.dry_run and not found and errors:
+        print("[source_filter_dry_run_fallback] source=local_history reason=no_remote_discovery_results")
+        for video in _local_history_source_candidates(history_data):
+            if video["video_id"] in found:
+                continue
+            source_result = evaluate_source_video(
+                video,
+                history_data=history_data,
+                seen_video_ids=set(found),
+                allow_recent_reprocess=args.force_discovery or args.allow_recent_reprocess,
+                rules=source_rules,
+                minimum_score=args.minimum_source_score,
+            )
+            video.update(source_result)
+            if not video.get("source_filter_accepted"):
+                reason = str(video.get("source_filter_reason") or "low_relevance_score")
+                rejected.append({**video, "reason": reason})
+                if not video.get("source_filter_hard_reject"):
+                    soft_rejected.append(video)
+                print(f"[source_filter_reject] video_id={video['video_id']} reason={reason}")
+                continue
+            print(
+                f"[source_filter_accept] video_id={video['video_id']} "
+                f"score={video.get('source_relevance_score')}"
+            )
+            found.setdefault(video["video_id"], video)
+
+    fallback_selected: list[dict[str, Any]] = []
+    if not found and soft_rejected and args.fallback_limit > 0:
+        fallback_selected = sorted(
+            soft_rejected,
+            key=lambda item: float(item.get("source_relevance_score") or 0),
+            reverse=True,
+        )[: args.fallback_limit]
+        for item in fallback_selected:
+            video_id = str(item.get("video_id") or "")
+            item["source_filter_accepted"] = True
+            item["source_filter_fallback"] = True
+            item["source_filter_reason"] = "fallback_selected"
+            found[video_id] = item
+        print(
+            f"[source_filter_fallback] selected={len(fallback_selected)} "
+            "reason=no_accepted_videos"
+        )
+
     selected, rejected_by_selection = _select_diverse_videos(
         list(found.values()),
         priority,
@@ -235,10 +318,25 @@ def main() -> None:
         force=args.force_discovery,
     )
     rejected.extend(rejected_by_selection)
+    fallback_ids = {str(item.get("video_id") or "") for item in fallback_selected}
+    report_rejected = [
+        item for item in rejected
+        if str(item.get("video_id") or "") not in fallback_ids
+    ]
+    source_report_paths = write_source_intelligence_report(
+        discovered=list(found.values()) + report_rejected,
+        accepted=list(found.values()),
+        rejected=report_rejected,
+        selected=selected,
+        dry_run=args.dry_run,
+        mode="podcast_discovery_batch",
+    )
 
     enqueued: list[dict[str, Any]] = []
     skipped_existing = 0
     for item in selected:
+        if args.dry_run:
+            continue
         block_reason = _discovery_block_reason(
             item["video_id"],
             item,
@@ -264,9 +362,11 @@ def main() -> None:
         found=list(found.values()),
         selected=selected,
         enqueued=enqueued,
-        rejected=rejected,
+        rejected=report_rejected,
         skipped_existing=skipped_existing,
         errors=errors,
+        source_report_paths=source_report_paths,
+        dry_run=args.dry_run,
     )
 
     print("PODCAST DISCOVERY BATCH")
@@ -278,7 +378,21 @@ def main() -> None:
     print(f"Selecionados: {len(selected)}")
     print(f"Enfileirados: {len(enqueued)}")
     print(f"Já existentes/ignorados: {skipped_existing}")
-    print(f"Rejeitados: {len(rejected)}")
+    print(f"Rejeitados: {len(report_rejected)}")
+    print("")
+    print("SOURCE FILTER SUMMARY")
+    print(f"videos_discovered: {len(found) + len(report_rejected)}")
+    print(f"accepted: {len(found)}")
+    print(f"hard_rejected: {sum(1 for item in report_rejected if item.get('source_filter_hard_reject'))}")
+    print(f"soft_rejected: {sum(1 for item in report_rejected if not item.get('source_filter_hard_reject'))}")
+    print(f"fallback_used: {bool(fallback_selected)}")
+    print(f"fallback_selected: {len(fallback_selected)}")
+    print(f"average_score: {_average_source_score(list(found.values()))}")
+    print(f"top_selected: {','.join(str(item.get('video_id') or '') for item in selected[:10])}")
+    print(f"Source intelligence JSON: {source_report_paths['json']}")
+    print(f"Source intelligence Markdown: {source_report_paths['md']}")
+    if args.dry_run:
+        print("Dry-run: nenhum vídeo foi enfileirado.")
     if errors:
         print("Erros:")
         for error in errors[:5]:
@@ -295,10 +409,10 @@ def main() -> None:
             f"{item['duration_seconds']}s | "
             f"{item['channel_title']} | {item['title']} | {item['url']}"
         )
-    if rejected:
+    if report_rejected:
         print("")
         print("Exemplos rejeitados:")
-        for item in rejected[:10]:
+        for item in report_rejected[:10]:
             print(f"- {item.get('reason')} | {item.get('title', '')} | {item.get('url', '')}")
 
 
@@ -409,6 +523,47 @@ def _fetch_details(
     return videos, rejected, ""
 
 
+def _local_history_source_candidates(history_data: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for video_id, item in history_data.items():
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "")
+        if not video_id or not title:
+            continue
+        candidates.append(
+            {
+                "video_id": str(video_id),
+                "title": title,
+                "channel_title": item.get("channel_title") or item.get("channel_name") or "",
+                "url": item.get("url") or f"https://www.youtube.com/watch?v={video_id}",
+                "market": item.get("discovery_market") or "LOCAL",
+                "query": item.get("discovery_query") or "local_history",
+                "published_at": item.get("published_at") or "",
+                "view_count": _to_int(item.get("view_count")),
+                "like_count": _to_int(item.get("like_count")),
+                "comment_count": _to_int(item.get("comment_count")),
+                "duration_seconds": _to_int(item.get("duration_seconds")),
+                "engagement_score": _to_int(item.get("engagement_score")),
+                "source_video": {
+                    "video_id": str(video_id),
+                    "title": title,
+                    "channel_title": item.get("channel_title") or item.get("channel_name") or "",
+                    "url": item.get("url") or f"https://www.youtube.com/watch?v={video_id}",
+                    "published_at": item.get("published_at") or "",
+                    "view_count": _to_int(item.get("view_count")),
+                    "like_count": _to_int(item.get("like_count")),
+                    "comment_count": _to_int(item.get("comment_count")),
+                    "duration_seconds": _to_int(item.get("duration_seconds")),
+                    "license": item.get("license"),
+                    "clip_permission_status": item.get("clip_permission_status") or "unknown",
+                },
+            }
+        )
+    candidates.sort(key=lambda item: (int(item.get("duration_seconds") or 0), str(item.get("title") or "")), reverse=True)
+    return candidates[:80]
+
+
 def _select_diverse_videos(
     videos: list[dict[str, Any]],
     priority: ProcessingPriorityService,
@@ -427,7 +582,8 @@ def _select_diverse_videos(
         video["processing_priority_score"] = score
         video["processing_priority_reason"] = reason
         editorial_score, editorial_reasons = _editorial_fit_score(video)
-        combined_score = (score * 0.55) + (editorial_score * 0.45)
+        source_score = float(video.get("source_relevance_score") or 0)
+        combined_score = (score * 0.42) + (editorial_score * 0.33) + (source_score * 0.25)
         video["editorial_fit_score"] = round(editorial_score, 2)
         video["editorial_fit_reasons"] = editorial_reasons
         video["combined_discovery_score"] = round(combined_score, 2)
@@ -435,6 +591,7 @@ def _select_diverse_videos(
     videos.sort(
         key=lambda item: (
             item["combined_discovery_score"],
+            item.get("source_relevance_score", 0),
             item["editorial_fit_score"],
             item["processing_priority_score"],
             item["comment_count"],
@@ -475,10 +632,12 @@ def _select_diverse_videos(
         if per_bucket[video["topic_bucket"]] >= 4:
             rejected.append({**video, "reason": f"limite por bucket: {video['topic_bucket']}"})
             continue
-        if video["editorial_fit_score"] < 4.5:
+        source_score = float(video.get("source_relevance_score") or 0)
+        source_override = bool(video.get("source_filter_fallback")) or source_score >= 5.5
+        if video["editorial_fit_score"] < 4.5 and not source_override:
             rejected.append({**video, "reason": "editorial_fit_score baixo"})
             continue
-        if video["processing_priority_score"] < 4:
+        if video["processing_priority_score"] < 4 and not source_override:
             rejected.append({**video, "reason": "processing_priority_score < 4"})
             continue
         selected.append(video)
@@ -500,6 +659,10 @@ def _annotate_history(history: VideoHistoryService, video_id: str, item: dict[st
     record["editorial_fit_score"] = item["editorial_fit_score"]
     record["editorial_fit_reasons"] = item["editorial_fit_reasons"]
     record["combined_discovery_score"] = item["combined_discovery_score"]
+    record["source_relevance_score"] = item.get("source_relevance_score", 0)
+    record["source_filter_reason"] = item.get("source_filter_reason", "")
+    record["source_relevance_positive"] = item.get("source_relevance_positive", [])
+    record["source_relevance_negative"] = item.get("source_relevance_negative", [])
     record["processing_priority_score"] = item["processing_priority_score"]
     record["processing_priority_reason"] = item["processing_priority_reason"]
     record["updated_at"] = datetime.utcnow().isoformat()
@@ -514,6 +677,8 @@ def _write_report(
     rejected: list[dict[str, Any]],
     skipped_existing: int,
     errors: list[str],
+    source_report_paths: dict[str, str] | None = None,
+    dry_run: bool = False,
 ) -> dict[str, str]:
     reports_dir = config.STORAGE_TRENDS_DIR.parent / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -522,11 +687,26 @@ def _write_report(
     md_path = reports_dir / f"podcast_discovery_report_{timestamp}.md"
     payload = {
         "generated_at": datetime.utcnow().isoformat(),
+        "dry_run": dry_run,
         "found_count": len(found),
         "selected_count": len(selected),
         "enqueued_count": len(enqueued),
         "rejected_count": len(rejected),
         "skipped_existing": skipped_existing,
+        "source_intelligence_report": source_report_paths or {},
+        "videos_discovered": len(found) + len(rejected),
+        "videos_after_source_filter": len(found),
+        "videos_rejected_by_source_filter": len(rejected),
+        "videos_hard_rejected_by_source_filter": sum(1 for item in rejected if item.get("source_filter_hard_reject")),
+        "videos_soft_rejected_by_source_filter": sum(1 for item in rejected if not item.get("source_filter_hard_reject")),
+        "source_filter_fallback_used": any(item.get("source_filter_fallback") for item in selected),
+        "source_filter_fallback_selected_count": sum(1 for item in selected if item.get("source_filter_fallback")),
+        "videos_rejected_by_duration": _reason_count(rejected, {"duration_too_short", "duration_too_long"}),
+        "videos_rejected_by_keyword": _reason_count(rejected, {"blocked_keyword", "likely_short", "likely_trailer", "likely_gameplay", "music_or_official_clip"}),
+        "videos_rejected_as_duplicates": _reason_count(rejected, {"duplicate_video"}),
+        "videos_rejected_recently_processed": _reason_count(rejected, {"recently_processed"}),
+        "average_source_relevance_score": _average_source_score(found),
+        "selected_video_ids": [str(item.get("video_id") or "") for item in selected if item.get("video_id")],
         "errors": errors,
         "found": _json_safe(found),
         "selected": _json_safe(selected),
@@ -545,11 +725,20 @@ def _markdown_report(payload: dict[str, Any]) -> str:
         "# ClipRadar Podcast Discovery Report",
         "",
         f"Generated at: {payload['generated_at']}",
+        f"Dry-run: {payload.get('dry_run', False)}",
         f"Found: {payload['found_count']}",
         f"Selected: {payload['selected_count']}",
         f"Enqueued: {payload['enqueued_count']}",
         f"Rejected: {payload['rejected_count']}",
         f"Skipped existing: {payload['skipped_existing']}",
+        f"Videos discovered: {payload.get('videos_discovered', 0)}",
+        f"Videos after source filter: {payload.get('videos_after_source_filter', 0)}",
+        f"Videos rejected by source filter: {payload.get('videos_rejected_by_source_filter', 0)}",
+        f"Hard rejected by source filter: {payload.get('videos_hard_rejected_by_source_filter', 0)}",
+        f"Soft rejected by source filter: {payload.get('videos_soft_rejected_by_source_filter', 0)}",
+        f"Fallback used: {payload.get('source_filter_fallback_used', False)}",
+        f"Fallback selected: {payload.get('source_filter_fallback_selected_count', 0)}",
+        f"Average source relevance score: {payload.get('average_source_relevance_score', 0)}",
         "",
         "## Enqueued",
         "",
@@ -565,6 +754,23 @@ def _markdown_report(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _reason_count(items: list[dict[str, Any]], reasons: set[str]) -> int:
+    return sum(
+        1
+        for item in items
+        if str(item.get("source_filter_reason") or item.get("reason") or "") in reasons
+    )
+
+
+def _average_source_score(items: list[dict[str, Any]]) -> float:
+    scores = [
+        float(item.get("source_relevance_score"))
+        for item in items
+        if item.get("source_relevance_score") is not None
+    ]
+    return round(sum(scores) / len(scores), 2) if scores else 0.0
+
+
 def _video_lines(item: dict[str, Any]) -> list[str]:
     return [
         f"### {item.get('title', '')}",
@@ -577,6 +783,7 @@ def _video_lines(item: dict[str, Any]) -> list[str]:
         f"Comments: {item.get('comment_count', 0)}",
         f"Processing Priority Score: {item.get('processing_priority_score', 0)}",
         f"Editorial Fit Score: {item.get('editorial_fit_score', 0)}",
+        f"Source Relevance Score: {item.get('source_relevance_score', 0)}",
         f"Combined Discovery Score: {item.get('combined_discovery_score', 0)}",
         f"Topic Bucket: {item.get('topic_bucket', '')}",
         f"Priority Reason: {item.get('processing_priority_reason', '')}",
@@ -588,8 +795,8 @@ def _video_lines(item: dict[str, Any]) -> list[str]:
 
 def _reject_reason(title: str, channel_title: str, duration_seconds: int) -> str:
     text = f"{title} {channel_title}".lower()
-    if duration_seconds < config.PODCAST_DISCOVERY_MIN_DURATION_SECONDS:
-        return f"duration < {config.PODCAST_DISCOVERY_MIN_DURATION_SECONDS}s"
+    if duration_seconds and duration_seconds < 60:
+        return "duration < 60s"
     for term in SHORTS_REJECT_TERMS:
         if term in text:
             return f"shorts rejeitado: {term}"
@@ -608,8 +815,6 @@ def _reject_reason(title: str, channel_title: str, duration_seconds: int) -> str
     for term in REACT_REJECT_TERMS:
         if term in text:
             return f"react/reação rejeitado: {term}"
-    if not any(term in text for term in CUTTABLE_FORMAT_TERMS):
-        return "não parece formato cortável"
     return ""
 
 
@@ -670,6 +875,12 @@ def _editorial_fit_score(video: dict[str, Any]) -> tuple[float, list[str]]:
     elif duration > 10800:
         score += 0.4
         reasons.append("duração muito longa, mas aproveitável")
+    elif duration >= 180:
+        score -= 1.0
+        reasons.append("duração curta, mas possivelmente cortável")
+    elif duration >= 60:
+        score -= 2.0
+        reasons.append("duração muito curta")
     else:
         score -= 4.0
         reasons.append("duração abaixo do mínimo")
@@ -746,7 +957,13 @@ def _duration_seconds(value: str | None) -> int:
     if not value:
         return 0
     try:
-        return int(isodate.parse_duration(value).total_seconds())
+        if isodate is not None:
+            return int(isodate.parse_duration(value).total_seconds())
+        match = re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", value)
+        if not match:
+            return 0
+        hours, minutes, seconds = (int(part or 0) for part in match.groups())
+        return (hours * 3600) + (minutes * 60) + seconds
     except Exception:
         return 0
 

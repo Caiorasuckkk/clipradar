@@ -79,6 +79,8 @@ class _CutsAnalyticsScreenState extends State<CutsAnalyticsScreen> {
           const SizedBox(height: 12),
           _CacheCard(cache: analytics.cache),
           const SizedBox(height: 12),
+          _SourceQualityCard(source: analytics.sourceIntelligence),
+          const SizedBox(height: 12),
           _ReasonsCard(overview: analytics.overview),
           const SizedBox(height: 12),
           _TopVideosCard(videos: analytics.byVideo.take(8).toList()),
@@ -198,6 +200,93 @@ class _CacheCard extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: AppColors.secondaryText),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SourceQualityCard extends StatelessWidget {
+  const _SourceQualityCard({required this.source});
+
+  final CutsAnalyticsSourceIntelligence source;
+
+  @override
+  Widget build(BuildContext context) {
+    final reasons = source.worstRejectionReasons;
+    final channels = source.bestChannelsByApprovalRate;
+    return DfCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _CardTitle(
+            icon: Icons.travel_explore_rounded,
+            title: 'Qualidade das fontes',
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _ChipMetric(
+                label: 'encontrados',
+                value: '${source.latestDiscoveredCount}',
+              ),
+              _ChipMetric(
+                label: 'aceitos',
+                value: '${source.latestAcceptedCount}',
+              ),
+              _ChipMetric(
+                label: 'rejeitados',
+                value: '${source.latestRejectedCount}',
+              ),
+              _ChipMetric(
+                label: 'duras',
+                value: '${source.latestHardRejectedCount}',
+              ),
+              _ChipMetric(
+                label: 'flexíveis',
+                value: '${source.latestSoftRejectedCount}',
+              ),
+              _ChipMetric(
+                label: 'fallback',
+                value: source.latestFallbackUsed
+                    ? '${source.latestFallbackSelectedCount}'
+                    : 'não',
+              ),
+              _ChipMetric(
+                label: 'score médio',
+                value: source.latestAverageSourceScore.toStringAsFixed(1),
+              ),
+            ],
+          ),
+          if (reasons.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: reasons.take(5).map((item) {
+                return _ChipMetric(
+                  label: '${item['reason'] ?? '-'}',
+                  value: '${item['count'] ?? 0}',
+                );
+              }).toList(),
+            ),
+          ],
+          if (channels.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ...channels.take(3).map((item) {
+              final rate = item['approval_rate'] is num
+                  ? (item['approval_rate'] as num).toDouble()
+                  : 0.0;
+              return _CompactRow(
+                title: '${item['name'] ?? 'fonte'}',
+                subtitle:
+                    '${item['approved'] ?? 0} aprov. • ${item['total'] ?? 0} cortes',
+                trailing: _percent(rate),
+              );
+            }),
+          ],
         ],
       ),
     );

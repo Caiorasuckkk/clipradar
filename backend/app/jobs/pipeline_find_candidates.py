@@ -18,6 +18,7 @@ from app.services.candidate_review_service import (
     load_candidate_queue,
 )
 from app.services.cache_manifest_service import get_cache_status, has_valid_clips
+from app.services.source_intelligence_service import source_intelligence_summary
 from app.services.video_history_service import VideoHistoryService
 
 
@@ -48,6 +49,7 @@ def main() -> None:
     parser.add_argument("--max-seconds-before-partial-release", type=int, default=180)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
+    parser.add_argument("--allow-recent-reprocess", action="store_true")
     args = parser.parse_args()
 
     if args.fast_mode:
@@ -75,7 +77,16 @@ def main() -> None:
             if processed_ids:
                 step["command"].append(f"--video-id={','.join(processed_ids)}")
         print(f"[step_command] step={index} command={_command_for_display(step['command'])}", flush=True)
-        if args.dry_run:
+        if args.dry_run and step["name"] == "discover_podcast_batch":
+            dry_step = {**step, "command": [*step["command"], "--dry-run"]}
+            result = _run_step(dry_step)
+            results.append(result)
+            print(f"Status: {result['status'].upper()}")
+            if result.get("error_message"):
+                print(result["error_message"])
+            print("")
+            continue
+        elif args.dry_run:
             result = _dry_run_step(step)
             results.append(result)
             print(f"Command: {_command_for_display(step['command'])}")
@@ -119,6 +130,7 @@ def main() -> None:
     summary = _candidate_summary()
     queue_payload = _candidate_queue_payload()
     cache_metrics = _cache_metrics_from_results(results, export_video_ids)
+    source_metrics = _source_metrics()
     steps_failed = sum(1 for item in results if item["status"] == "error")
     has_ready_candidates = summary["total_candidates"] > 0 and summary["preview_ready"] > 0
     pipeline_status = "success"
@@ -155,6 +167,7 @@ def main() -> None:
         "candidates_dropped_by_dedupe": queue_payload.get("candidates_dropped_by_dedupe"),
         "candidates_dropped_by_limit": queue_payload.get("candidates_dropped_by_limit"),
         "candidate_stats_by_video": queue_payload.get("stats_by_video", []),
+        **source_metrics,
         **cache_metrics,
         "steps_total": len(results),
         "steps_ok": sum(1 for item in results if item["status"] == "ok"),
@@ -176,6 +189,14 @@ def main() -> None:
     print(f"steps_ok: {payload['steps_ok']}")
     print(f"steps_failed: {payload['steps_failed']}")
     print(f"selected_videos_count: {payload['selected_videos_count']}")
+    print(f"videos_discovered: {payload.get('videos_discovered')}")
+    print(f"videos_after_source_filter: {payload.get('videos_after_source_filter')}")
+    print(f"videos_rejected_by_source_filter: {payload.get('videos_rejected_by_source_filter')}")
+    print(f"videos_hard_rejected_by_source_filter: {payload.get('videos_hard_rejected_by_source_filter')}")
+    print(f"videos_soft_rejected_by_source_filter: {payload.get('videos_soft_rejected_by_source_filter')}")
+    print(f"source_filter_fallback_used: {payload.get('source_filter_fallback_used')}")
+    print(f"source_filter_fallback_selected_count: {payload.get('source_filter_fallback_selected_count')}")
+    print(f"average_source_relevance_score: {payload.get('average_source_relevance_score')}")
     print(f"processed_videos_count: {payload['processed_videos_count']}")
     print(f"candidate_count: {payload['candidate_count']}")
     print(f"preview_ready: {payload['preview_ready']}")
@@ -468,7 +489,12 @@ def _build_steps(args: argparse.Namespace) -> list[Step]:
         {
             "name": "discover_podcast_batch",
             "label": "discover videos",
-            "command": _command("app.jobs.discover_podcast_batch"),
+            "command": _command(
+                "app.jobs.discover_podcast_batch",
+                allow_recent_reprocess=args.allow_recent_reprocess,
+                source_minimum_score=_discovery_minimum_source_score(args),
+                source_fallback_limit=_discovery_fallback_limit(args),
+            ),
             "env": {},
         },
         {
@@ -785,8 +811,11 @@ def _command(
     max_duration: float | None = None,
     quality_threshold: float | None = None,
     dedup_overlap: float | None = None,
+    allow_recent_reprocess: bool = False,
+    source_minimum_score: float | None = None,
+    source_fallback_limit: int | None = None,
 ) -> list[str]:
-    command = [sys.executable, "-m", module]
+    command = [_python_executable(), "-m", module]
     if video_id:
         command.extend(["--video-id", video_id])
     if include_diagnostics:
@@ -819,7 +848,39 @@ def _command(
         command.extend(["--quality-threshold", str(quality_threshold)])
     if dedup_overlap is not None:
         command.extend(["--dedup-overlap", str(dedup_overlap)])
+    if allow_recent_reprocess:
+        command.append("--allow-recent-reprocess")
+    if source_minimum_score is not None:
+        command.extend(["--minimum-source-score", str(source_minimum_score)])
+    if source_fallback_limit is not None:
+        command.extend(["--fallback-limit", str(source_fallback_limit)])
     return command
+
+
+def _python_executable() -> str:
+    venv_python = Path(sys.executable).resolve().parents[3] / "backend" / ".ven" / "Scripts" / "python.exe"
+    local_venv = Path(__file__).resolve().parents[2] / ".ven" / "Scripts" / "python.exe"
+    if local_venv.exists():
+        return str(local_venv)
+    if venv_python.exists():
+        return str(venv_python)
+    return sys.executable
+
+
+def _discovery_minimum_source_score(args: argparse.Namespace) -> float:
+    if args.fast_mode:
+        return 4.5
+    if args.no_candidate_limit or args.include_diagnostics or args.render_all_good_candidates:
+        return 3.5
+    return 4.0
+
+
+def _discovery_fallback_limit(args: argparse.Namespace) -> int:
+    if args.fast_mode:
+        return 1
+    if args.no_candidate_limit or args.include_diagnostics or args.render_all_good_candidates:
+        return 3
+    return 1
 
 
 def _preview_cap(args: argparse.Namespace) -> int | None:
@@ -996,6 +1057,22 @@ def _candidate_queue_payload() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _source_metrics() -> dict[str, Any]:
+    summary = source_intelligence_summary()
+    return {
+        "videos_discovered": summary.get("latest_discovered_count", 0),
+        "videos_after_source_filter": summary.get("latest_accepted_count", 0),
+        "videos_rejected_by_source_filter": summary.get("latest_rejected_count", 0),
+        "videos_hard_rejected_by_source_filter": summary.get("latest_hard_rejected_count", 0),
+        "videos_soft_rejected_by_source_filter": summary.get("latest_soft_rejected_count", 0),
+        "source_filter_fallback_used": summary.get("latest_fallback_used", False),
+        "source_filter_fallback_selected_count": summary.get("latest_fallback_selected_count", 0),
+        "videos_rejected_by_reason": summary.get("latest_rejected_by_reason", {}),
+        "average_source_relevance_score": summary.get("latest_average_source_score", 0),
+        "selected_video_ids": summary.get("latest_selected_video_ids", []),
+    }
+
+
 def _next_action(summary: dict[str, int]) -> str:
     if summary["total_candidates"] > 0 and summary["preview_ready"] > 0 and summary["pending"] > 0:
         return "open_candidate_clips"
@@ -1034,6 +1111,7 @@ def _finish_pipeline(
     queue_payload = _candidate_queue_payload()
     pending_reviewable = _pending_reviewable_count()
     cache_metrics = _cache_metrics_from_results(results, export_video_ids)
+    source_metrics = _source_metrics()
     steps_failed = sum(1 for item in results if item["status"] == "error")
     has_ready_candidates = summary["total_candidates"] > 0 and summary["preview_ready"] > 0
     pipeline_status = "success"
@@ -1084,6 +1162,7 @@ def _finish_pipeline(
         "candidates_dropped_by_dedupe": queue_payload.get("candidates_dropped_by_dedupe"),
         "candidates_dropped_by_limit": queue_payload.get("candidates_dropped_by_limit"),
         "candidate_stats_by_video": queue_payload.get("stats_by_video", []),
+        **source_metrics,
         **cache_metrics,
         "steps_total": len(results),
         "steps_ok": sum(1 for item in results if item["status"] == "ok"),
@@ -1114,6 +1193,14 @@ def _finish_pipeline(
     print(f"steps_ok: {payload['steps_ok']}")
     print(f"steps_failed: {payload['steps_failed']}")
     print(f"selected_videos_count: {payload['selected_videos_count']}")
+    print(f"videos_discovered: {payload.get('videos_discovered')}")
+    print(f"videos_after_source_filter: {payload.get('videos_after_source_filter')}")
+    print(f"videos_rejected_by_source_filter: {payload.get('videos_rejected_by_source_filter')}")
+    print(f"videos_hard_rejected_by_source_filter: {payload.get('videos_hard_rejected_by_source_filter')}")
+    print(f"videos_soft_rejected_by_source_filter: {payload.get('videos_soft_rejected_by_source_filter')}")
+    print(f"source_filter_fallback_used: {payload.get('source_filter_fallback_used')}")
+    print(f"source_filter_fallback_selected_count: {payload.get('source_filter_fallback_selected_count')}")
+    print(f"average_source_relevance_score: {payload.get('average_source_relevance_score')}")
     print(f"processed_videos_count: {payload['processed_videos_count']}")
     print(f"candidate_count: {payload['candidate_count']}")
     print(f"preview_ready: {payload['preview_ready']}")
@@ -1165,6 +1252,14 @@ def _markdown_report(payload: dict[str, Any]) -> str:
         f"Partial candidates: {payload.get('partial_candidate_count')}",
         f"Partial preview ready: {payload.get('partial_preview_ready')}",
         f"Partial pending reviewable: {payload.get('partial_pending_reviewable_count')}",
+        f"Videos discovered: {payload.get('videos_discovered')}",
+        f"Videos after source filter: {payload.get('videos_after_source_filter')}",
+        f"Videos rejected by source filter: {payload.get('videos_rejected_by_source_filter')}",
+        f"Videos hard rejected by source filter: {payload.get('videos_hard_rejected_by_source_filter')}",
+        f"Videos soft rejected by source filter: {payload.get('videos_soft_rejected_by_source_filter')}",
+        f"Source filter fallback used: {payload.get('source_filter_fallback_used')}",
+        f"Source filter fallback selected: {payload.get('source_filter_fallback_selected_count')}",
+        f"Average source relevance score: {payload.get('average_source_relevance_score')}",
         f"Candidates: {payload['candidate_count']}",
         f"Candidates raw: {payload.get('candidates_raw')}",
         f"After quality filter: {payload.get('candidates_after_quality_filter')}",
