@@ -19,6 +19,9 @@ from app.services.generation_workspace_service import (
     list_projects,
     update_project,
 )
+from app.services.generation_engine_service import engine_status
+from app.services.generation_factual_grounding_service import generate_factual_brief
+from app.services.generation_guardrail_service import analyze_generation_project
 from app.services.generation_voice_service import (
     VoiceGenerationError,
     delete_voice_file,
@@ -47,8 +50,16 @@ class GenerationIdeaPayload(BaseModel):
 class GenerationScriptPayload(BaseModel):
     idea: str
     niche: str = ""
+    topic: str = ""
     duration_seconds: int = 45
     tone: str = "curioso"
+    language: str = "pt-BR"
+
+
+class GenerationFactualBriefPayload(BaseModel):
+    niche: str = ""
+    topic: str = ""
+    idea: str = ""
     language: str = "pt-BR"
 
 
@@ -64,6 +75,30 @@ class GenerationProjectPayload(BaseModel):
     cta: str = ""
     hashtags: list[str] = Field(default_factory=list)
     visual_context: list[str] = Field(default_factory=list)
+    factual_brief: dict[str, Any] = Field(default_factory=dict)
+    factual_grounding_used: bool = False
+    factual_grounding_confidence: str = "low"
+    specificity_score: float | None = None
+    engine_mode: str = "local"
+    provider: str = "none"
+    fallback_used: bool = False
+    fact_check_notes: list[str] = Field(default_factory=list)
+    estimated_duration_seconds: float | None = None
+    voice_style: str = ""
+    pacing: str = ""
+    script_quality_score: float | None = None
+    script_quality_tier: str = ""
+    script_positive_signals: list[str] = Field(default_factory=list)
+    script_negative_signals: list[str] = Field(default_factory=list)
+    script_reject_reason: str = ""
+    script_repair_applied: bool = False
+    script_repair_reason: str = ""
+    guardrail_status: str = ""
+    guardrail_risks: list[str] = Field(default_factory=list)
+    disclosure_recommended: bool = False
+    fact_check_required: bool = False
+    copyright_review_required: bool = False
+    platform_notes: list[str] = Field(default_factory=list)
     voice_status: str = "none"
     voice_name: str = ""
     voice_provider: str = ""
@@ -96,6 +131,11 @@ def get_generation_status() -> dict[str, Any]:
     return generation_status()
 
 
+@router.get("/engine/status")
+def get_generation_engine_status() -> dict[str, Any]:
+    return engine_status()
+
+
 @router.post("/ideas")
 def post_generation_ideas(payload: GenerationIdeaPayload) -> dict[str, Any]:
     return {
@@ -108,11 +148,22 @@ def post_generation_ideas(payload: GenerationIdeaPayload) -> dict[str, Any]:
     }
 
 
+@router.post("/factual-brief")
+def post_generation_factual_brief(payload: GenerationFactualBriefPayload) -> dict[str, Any]:
+    return generate_factual_brief(
+        niche=payload.niche,
+        topic=payload.topic,
+        idea=payload.idea,
+        language=payload.language,
+    )
+
+
 @router.post("/scripts")
 def post_generation_script(payload: GenerationScriptPayload) -> dict[str, Any]:
     return generate_script(
         idea=payload.idea,
         niche=payload.niche,
+        topic=payload.topic,
         duration_seconds=payload.duration_seconds,
         tone=payload.tone,
         language=payload.language,
@@ -151,6 +202,18 @@ def delete_generation_project(project_id: str) -> dict[str, Any]:
     if not deleted:
         raise HTTPException(status_code=404, detail="generation_project_not_found")
     return {"deleted": True, "project_id": project_id}
+
+
+@router.post("/projects/{project_id}/guardrail")
+def post_generation_project_guardrail(project_id: str) -> dict[str, Any]:
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="generation_project_not_found")
+    guardrail = analyze_generation_project(project)
+    updated = update_project(project_id, {**project, **guardrail})
+    if not updated:
+        raise HTTPException(status_code=404, detail="generation_project_not_found")
+    return updated
 
 
 @router.get("/voices")

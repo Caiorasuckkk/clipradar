@@ -48,6 +48,7 @@ class _GenerationScreenState extends State<GenerationScreen> {
   bool _loadingScript = false;
   bool _loadingProjects = true;
   bool _loadingVoices = true;
+  bool _loadingEngine = true;
   bool _savingProject = false;
   bool _generatingVoice = false;
   bool _playingVoice = false;
@@ -56,6 +57,7 @@ class _GenerationScreenState extends State<GenerationScreen> {
   GenerationScript? _script;
   GenerationProject? _selectedProject;
   GenerationVoicesResponse? _voicesResponse;
+  GenerationEngineStatus? _engineStatus;
   String _selectedVoice = 'pt-BR-AntonioNeural';
   String _voiceSpeed = 'Normal';
   List<GenerationIdea> _ideas = const [];
@@ -64,11 +66,28 @@ class _GenerationScreenState extends State<GenerationScreen> {
   @override
   void initState() {
     super.initState();
+    _loadEngineStatus();
     _loadProjects();
     _loadVoices();
     _audioPlayer.onPlayerComplete.listen((_) {
       if (mounted) setState(() => _playingVoice = false);
     });
+  }
+
+  Future<void> _loadEngineStatus() async {
+    try {
+      final status = await _api.fetchGenerationEngineStatus();
+      if (!mounted) return;
+      setState(() {
+        _engineStatus = status;
+        _loadingEngine = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingEngine = false;
+      });
+    }
   }
 
   @override
@@ -243,6 +262,22 @@ class _GenerationScreenState extends State<GenerationScreen> {
       cta: project.cta,
       hashtags: project.hashtags,
       visualContext: project.visualContext,
+      factCheckNotes: project.factCheckNotes,
+      factualBrief: project.factualBrief,
+      factualGroundingUsed: project.factualGroundingUsed,
+      factualGroundingConfidence: project.factualGroundingConfidence,
+      specificityScore: project.specificityScore,
+      estimatedDurationSeconds: project.estimatedDurationSeconds,
+      voiceStyle: project.voiceStyle,
+      pacing: project.pacing,
+      engineMode: project.engineMode,
+      provider: project.provider,
+      fallbackUsed: project.fallbackUsed,
+      scriptQualityScore: project.scriptQualityScore,
+      scriptQualityTier: project.scriptQualityTier,
+      scriptPositiveSignals: project.scriptPositiveSignals,
+      scriptNegativeSignals: project.scriptNegativeSignals,
+      scriptRejectReason: project.scriptRejectReason,
       niche: project.niche,
       language: project.language,
       tone: project.tone,
@@ -359,6 +394,27 @@ class _GenerationScreenState extends State<GenerationScreen> {
           .where((item) => item.isNotEmpty)
           .toList(),
       'visual_context': _lines(_visualController.text),
+      'fact_check_notes': _script?.factCheckNotes ?? const <String>[],
+      'factual_brief': _script?.factualBrief ?? const <String, dynamic>{},
+      'factual_grounding_used': _script?.factualGroundingUsed ?? false,
+      'factual_grounding_confidence':
+          _script?.factualGroundingConfidence ?? 'low',
+      'specificity_score': _script?.specificityScore,
+      'estimated_duration_seconds':
+          _script?.estimatedDurationSeconds ?? _duration,
+      'voice_style': _script?.voiceStyle ?? '',
+      'pacing': _script?.pacing ?? '',
+      'engine_mode':
+          _script?.engineMode ?? _engineStatus?.engineMode ?? 'local',
+      'provider': _script?.provider ?? _engineStatus?.provider ?? 'none',
+      'fallback_used': _script?.fallbackUsed ?? false,
+      'script_quality_score': _script?.scriptQualityScore,
+      'script_quality_tier': _script?.scriptQualityTier ?? '',
+      'script_positive_signals':
+          _script?.scriptPositiveSignals ?? const <String>[],
+      'script_negative_signals':
+          _script?.scriptNegativeSignals ?? const <String>[],
+      'script_reject_reason': _script?.scriptRejectReason ?? '',
     };
   }
 
@@ -394,7 +450,10 @@ class _GenerationScreenState extends State<GenerationScreen> {
           _InlineError(message: _error!),
           const SizedBox(height: 12),
         ],
-        const _PipelineStatus(),
+        _PipelineStatus(
+          loadingEngine: _loadingEngine,
+          engineStatus: _engineStatus,
+        ),
         const SizedBox(height: 14),
         SegmentedButton<_GenerationTab>(
           segments: const [
@@ -513,7 +572,13 @@ class _GenerationScreenState extends State<GenerationScreen> {
 }
 
 class _PipelineStatus extends StatelessWidget {
-  const _PipelineStatus();
+  const _PipelineStatus({
+    required this.loadingEngine,
+    required this.engineStatus,
+  });
+
+  final bool loadingEngine;
+  final GenerationEngineStatus? engineStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -530,6 +595,8 @@ class _PipelineStatus extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('Pipeline de Geração', style: AppTextStyles.cardTitle),
+          const SizedBox(height: 10),
+          _EngineStatusLine(loading: loadingEngine, status: engineStatus),
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
@@ -760,6 +827,42 @@ class _VoiceSection extends StatelessWidget {
   }
 }
 
+class _EngineStatusLine extends StatelessWidget {
+  const _EngineStatusLine({required this.loading, required this.status});
+
+  final bool loading;
+  final GenerationEngineStatus? status;
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const Text('Carregando engine...', style: AppTextStyles.muted);
+    }
+    final engine = status?.engineMode ?? 'local';
+    final provider = status?.provider ?? 'none';
+    final fallbackText = status?.fallbackAvailable == true
+        ? 'fallback local disponível'
+        : 'sem fallback';
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        DfStatusChip(
+          label: engine == 'canal_dark' ? 'Canal Dark Engine' : 'Local Engine',
+          status: engine == 'canal_dark' ? 'running' : 'success',
+        ),
+        DfStatusChip(label: 'provider: $provider'),
+        DfStatusChip(label: fallbackText),
+        if (status?.externalAiAvailable == true)
+          const DfStatusChip(label: 'Gemini ativo', status: 'success')
+        else
+          const DfStatusChip(label: 'sem IA externa'),
+      ],
+    );
+  }
+}
+
 class _IdeasSection extends StatelessWidget {
   const _IdeasSection({
     required this.nicheController,
@@ -800,7 +903,8 @@ class _IdeasSection extends StatelessWidget {
             children: [
               const DfSectionHeader(
                 title: 'Ideias',
-                subtitle: 'Gere ângulos locais com templates, sem IA externa.',
+                subtitle:
+                    'Gere ângulos com engine local ou Canal Dark, com fallback seguro.',
               ),
               TextField(
                 controller: nicheController,
@@ -909,6 +1013,10 @@ class _ScriptSection extends StatelessWidget {
             title: 'Roteiro',
             subtitle: 'Edite o rascunho antes de salvar o projeto.',
           ),
+          if (script != null) ...[
+            _ScriptQualitySummary(script: script!),
+            const SizedBox(height: 12),
+          ],
           TextField(
             controller: titleController,
             decoration: const InputDecoration(labelText: 'Título'),
@@ -1059,14 +1167,28 @@ class _IdeaCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(idea.whyItMightWork, style: AppTextStyles.muted),
+            if (idea.curiosityGap.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _LabelText(label: 'Lacuna', text: idea.curiosityGap),
+            ],
+            if (idea.visualDirection.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              _LabelText(label: 'Visual', text: idea.visualDirection),
+            ],
             const SizedBox(height: 10),
             Wrap(
               spacing: 6,
               runSpacing: 6,
-              children: idea.suggestedHashtags
-                  .take(4)
-                  .map((tag) => DfStatusChip(label: tag))
-                  .toList(),
+              children: [
+                if (idea.targetEmotion.isNotEmpty)
+                  DfStatusChip(label: idea.targetEmotion),
+                if (idea.factCheckNeeded)
+                  const DfStatusChip(label: 'fact-check', status: 'warning'),
+                DfStatusChip(label: idea.engineMode),
+                ...idea.suggestedHashtags
+                    .take(4)
+                    .map((tag) => DfStatusChip(label: tag)),
+              ],
             ),
             const SizedBox(height: 12),
             SizedBox(
@@ -1125,6 +1247,23 @@ class _ProjectCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: AppTextStyles.muted,
             ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                if (project.scriptQualityTier.isNotEmpty)
+                  DfStatusChip(
+                    label:
+                        '${project.scriptQualityTier} ${project.scriptQualityScore ?? ''}',
+                    status: _qualityStatus(project.scriptQualityTier),
+                  ),
+                DfStatusChip(label: project.engineMode),
+                if (project.fallbackUsed) const DfStatusChip(label: 'fallback'),
+                if (project.factCheckNotes.isNotEmpty)
+                  const DfStatusChip(label: 'fact-check', status: 'warning'),
+              ],
+            ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -1150,6 +1289,109 @@ class _ProjectCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _ScriptQualitySummary extends StatelessWidget {
+  const _ScriptQualitySummary({required this.script});
+
+  final GenerationScript script;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.secondaryBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              DfStatusChip(
+                label:
+                    'score ${script.scriptQualityScore ?? '-'} · ${script.scriptQualityTier.isEmpty ? 'sem tier' : script.scriptQualityTier}',
+                status: _qualityStatus(script.scriptQualityTier),
+              ),
+              DfStatusChip(label: script.engineMode),
+              DfStatusChip(label: 'provider: ${script.provider}'),
+              if (script.fallbackUsed) const DfStatusChip(label: 'fallback'),
+              if ((script.estimatedDurationSeconds ?? 0) > 0)
+                DfStatusChip(
+                  label: '${script.estimatedDurationSeconds!.round()}s',
+                ),
+            ],
+          ),
+          if (script.voiceStyle.isNotEmpty || script.pacing.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _LabelText(
+              label: 'Voz',
+              text: [
+                script.voiceStyle,
+                script.pacing,
+              ].where((item) => item.trim().isNotEmpty).join(' · '),
+            ),
+          ],
+          if (script.factCheckNotes.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _LabelText(
+              label: 'Fact-check',
+              text: script.factCheckNotes.join(' '),
+            ),
+          ],
+          if (script.scriptPositiveSignals.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _LabelText(
+              label: 'Sinais bons',
+              text: script.scriptPositiveSignals.take(4).join(', '),
+            ),
+          ],
+          if (script.scriptNegativeSignals.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            _LabelText(
+              label: 'Ajustes',
+              text: script.scriptNegativeSignals.take(4).join(', '),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _LabelText extends StatelessWidget {
+  const _LabelText({required this.label, required this.text});
+
+  final String label;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: '$label: ',
+            style: const TextStyle(
+              color: AppColors.text,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          TextSpan(
+            text: text,
+            style: const TextStyle(color: AppColors.secondaryText),
+          ),
+        ],
+      ),
+      maxLines: 3,
+      overflow: TextOverflow.ellipsis,
     );
   }
 }
@@ -1312,6 +1554,17 @@ String _voiceStatusLabel(String status) {
     'failed' => 'Falha ao gerar narração',
     'generating' => 'Gerando narração...',
     _ => 'Sem narração',
+  };
+}
+
+String _qualityStatus(String tier) {
+  return switch (tier) {
+    'excellent' => 'success',
+    'good' => 'success',
+    'average' => 'warning',
+    'weak' => 'warning',
+    'reject' => 'failed',
+    _ => '',
   };
 }
 

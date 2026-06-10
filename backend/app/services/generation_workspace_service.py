@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from app import config
+from app.services.generation_engine_service import (
+    generate_engine_ideas,
+    generate_engine_script,
+)
+from app.services.generation_script_quality_service import score_generation_script
 
 
 PROJECTS_PATH = config.STORAGE_GENERATION_DIR / "projects.json"
@@ -94,75 +99,40 @@ def delete_project(project_id: str) -> bool:
 
 
 def generate_ideas(niche: str, topic: str = "", language: str = "pt-BR", tone: str = "curioso") -> list[dict[str, Any]]:
-    niche_label = _clean(niche) or "curiosidades"
-    topic_label = _clean(topic) or _default_topic(niche_label)
-    normalized_niche = _normalize(niche_label)
-    normalized_tone = _normalize(tone or "curioso")
-    angles = NICHE_ANGLES.get(normalized_niche, NICHE_ANGLES["curiosidades"])
-    tone_pack = TONE_WORDS.get(normalized_tone, TONE_WORDS["curioso"])
-    ideas: list[dict[str, Any]] = []
-    for index, angle in enumerate(angles + _generic_angles(), start=1):
-        if len(ideas) >= 6:
-            break
-        title = f"{topic_label}: {angle}"
-        hook = f"{tone_pack['hook']}: {topic_label.lower()} pode ser mais importante do que parece."
-        ideas.append(
-            {
-                "idea_id": f"idea_{index}",
-                "title": title,
-                "angle": angle,
-                "hook": hook,
-                "why_it_might_work": _why_it_works(niche_label, angle, tone),
-                "risk_level": _risk_level(normalized_niche, normalized_tone),
-                "suggested_hashtags": _hashtags(niche_label, topic_label, language),
-                "niche": niche_label,
-                "topic": topic_label,
-                "language": language or "pt-BR",
-                "tone": tone or "curioso",
-            }
-        )
-    return ideas
+    return generate_engine_ideas(niche=niche, topic=topic, language=language, tone=tone)
 
 
 def generate_script(
     idea: str,
     niche: str = "",
+    topic: str = "",
     duration_seconds: int = 45,
     tone: str = "curioso",
     language: str = "pt-BR",
 ) -> dict[str, Any]:
-    idea_text = _clean(idea) or "Uma ideia para explicar de forma simples"
-    niche_label = _clean(niche) or "geral"
-    normalized_tone = _normalize(tone or "curioso")
-    tone_pack = TONE_WORDS.get(normalized_tone, TONE_WORDS["curioso"])
-    line_count = 5 if duration_seconds <= 30 else 7 if duration_seconds <= 45 else 9
-    lines = [
-        f"{tone_pack['hook']}.",
-        f"O ponto central é: {idea_text}.",
-        "Sem uma fonte específica, trate isso como um rascunho opinativo, não como fato fechado.",
-        "Mostre o contraste entre o que muita gente pensa e o que pode estar acontecendo de verdade.",
-        "Use exemplos visuais simples para manter o ritmo.",
-        "Feche retomando a pergunta inicial de forma direta.",
-        "Deixe espaço para o público discordar nos comentários.",
-        "Se houver dados confiáveis depois, substitua este trecho por uma informação verificável.",
-        "Mantenha frases curtas para facilitar a narração.",
-    ][:line_count]
-    return {
-        "title": _title_from_idea(idea_text),
-        "hook": lines[0],
-        "script_lines": lines,
-        "cta": tone_pack["cta"],
-        "hashtags": _hashtags(niche_label, idea_text, language),
-        "visual_context": _visual_context(niche_label, idea_text),
-        "niche": niche_label,
-        "language": language or "pt-BR",
-        "tone": tone or "curioso",
-        "duration_seconds": duration_seconds,
-        "status": "script",
-    }
+    return generate_engine_script(
+        idea=idea,
+        niche=niche,
+        topic=topic,
+        duration_seconds=duration_seconds,
+        tone=tone,
+        language=language,
+    )
 
 
 def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
+    quality_payload = {
+        "title": payload.get("title"),
+        "hook": payload.get("hook"),
+        "script_lines": payload.get("script_lines"),
+        "cta": payload.get("cta"),
+        "hashtags": payload.get("hashtags"),
+        "visual_context": payload.get("visual_context"),
+        "fact_check_notes": payload.get("fact_check_notes"),
+        "factual_brief": payload.get("factual_brief"),
+        "estimated_duration_seconds": payload.get("estimated_duration_seconds"),
+    }
+    quality = score_generation_script(quality_payload)
     return {
         "project_id": str(payload.get("project_id") or f"gen_{uuid.uuid4().hex[:12]}"),
         "title": _clean(payload.get("title")) or "Projeto sem título",
@@ -176,6 +146,33 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "cta": _clean(payload.get("cta")),
         "hashtags": _string_list(payload.get("hashtags")),
         "visual_context": _string_list(payload.get("visual_context")),
+        "factual_brief": payload.get("factual_brief") if isinstance(payload.get("factual_brief"), dict) else {},
+        "factual_grounding_used": _bool(payload.get("factual_grounding_used")),
+        "factual_grounding_confidence": _clean(payload.get("factual_grounding_confidence")) or "low",
+        "specificity_score": _float_or_none(payload.get("specificity_score")),
+        "engine_mode": _engine_mode(payload.get("engine_mode")),
+        "provider": _provider(payload.get("provider")),
+        "fallback_used": _bool(payload.get("fallback_used")),
+        "fact_check_notes": _string_list(payload.get("fact_check_notes")),
+        "estimated_duration_seconds": _float_or_none(payload.get("estimated_duration_seconds")),
+        "voice_style": _clean(payload.get("voice_style")),
+        "pacing": _clean(payload.get("pacing")),
+        "script_quality_score": _float_or_none(payload.get("script_quality_score")) or quality["script_quality_score"],
+        "script_quality_tier": _clean(payload.get("script_quality_tier")) or quality["script_quality_tier"],
+        "script_positive_signals": _string_list(payload.get("script_positive_signals"))
+        or quality["script_positive_signals"],
+        "script_negative_signals": _string_list(payload.get("script_negative_signals"))
+        or quality["script_negative_signals"],
+        "script_reject_reason": _clean(payload.get("script_reject_reason"))
+        or quality["script_reject_reason"],
+        "script_repair_applied": _bool(payload.get("script_repair_applied")),
+        "script_repair_reason": _clean(payload.get("script_repair_reason")),
+        "guardrail_status": _clean(payload.get("guardrail_status")),
+        "guardrail_risks": _string_list(payload.get("guardrail_risks")),
+        "disclosure_recommended": _bool(payload.get("disclosure_recommended")),
+        "fact_check_required": _bool(payload.get("fact_check_required")),
+        "copyright_review_required": _bool(payload.get("copyright_review_required")),
+        "platform_notes": _string_list(payload.get("platform_notes")),
         "voice_status": _voice_status(payload.get("voice_status")),
         "voice_name": _clean(payload.get("voice_name")),
         "voice_provider": _clean(payload.get("voice_provider")),
@@ -216,12 +213,28 @@ def _save_projects(projects: list[dict[str, Any]]) -> None:
 
 def _status(value: object) -> str:
     text = str(value or "idea")
-    return text if text in {"idea", "script", "ready_for_voice", "ready_for_visual", "archived"} else "idea"
+    return text if text in {"idea", "script", "ready_for_voice", "ready_for_visual", "ready_for_render", "archived"} else "idea"
+
+
+def _engine_mode(value: object) -> str:
+    text = str(value or "local").strip().lower()
+    return text if text in {"local", "canal_dark"} else "local"
+
+
+def _provider(value: object) -> str:
+    text = str(value or "none").strip().lower()
+    return text if text in {"none", "gemini"} else "none"
 
 
 def _voice_status(value: object) -> str:
     text = str(value or "none")
     return text if text in {"none", "generating", "ready", "failed"} else "none"
+
+
+def _bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "sim"}
 
 
 def _clean(value: object) -> str:

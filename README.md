@@ -582,6 +582,37 @@ python -m app.jobs.pipeline_find_candidates --dry-run --max-videos 10 --include-
 
 `batch_status` summarizes candidate queue health, preview availability, review counts, rendered exports, final review counts, the latest posting package, recent reports, and tracked failed downloads. Candidate preview downloads now retry with simple backoff, can clean `.part`/`.ytdl` files for selected videos, and write failures to `backend/app/storage/reports/failed_candidate_downloads.json`. `export_ready_to_post_package --package-name latest` writes a stable `posting_package/latest` folder, while `--clean-old` removes old package folders safely inside `backend/app/storage/posting_package`.
 
+## DarkFlow 0.5.47 - Canal Dark Engine Integration
+
+The local Generation workspace now has a pluggable script engine inspired by the `canal-dark` reference project.
+
+```text
+GENERATION_ENGINE=local
+GENERATION_AI_PROVIDER=none
+GEMINI_API_KEY=
+GENERATION_REQUIRE_EXTERNAL_AI=false
+```
+
+Use `GENERATION_ENGINE=canal_dark` and `GENERATION_AI_PROVIDER=gemini` only when Gemini is intentionally configured. If Gemini is unavailable and external AI is not required, the API falls back to local templates and marks `fallback_used=true`.
+
+Endpoints:
+
+```text
+GET  /generation/engine/status
+POST /generation/ideas
+POST /generation/scripts
+POST /generation/projects
+POST /generation/projects/{project_id}/guardrail
+```
+
+Generated ideas and scripts now include engine/provider metadata, fact-check notes, visual direction/context, voice style, pacing, and script quality score/tier. This version does not integrate n8n, Postiz, Telegram, Google Sheets, b-roll providers, rendering, publishing, OpenAI, Whisper, or automatic posting.
+
+Reference mapping:
+
+```text
+backend/app/docs/canal_dark_engine_mapping.md
+```
+
 ## ClipRadar 0.5.33 - Local Operations Dashboard + Job Runner API
 
 The Android review app now includes an `Operations` tab for running allowed local jobs through the backend API. The Flutter app does not execute FFmpeg, yt-dlp, shell commands, or arbitrary commands directly; it only calls allowlisted backend endpoints. Keep the backend running until long jobs finish.

@@ -238,6 +238,14 @@ class ApiClient {
         .toList();
   }
 
+  Future<GenerationEngineStatus> fetchGenerationEngineStatus() async {
+    final response = await _client.get(_uri('/generation/engine/status'));
+    _throwIfBad(response);
+    return GenerationEngineStatus.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<GenerationScript> generateScript({
     required String idea,
     required String niche,
@@ -293,6 +301,16 @@ class ApiClient {
       _uri('/generation/projects/$projectId'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(payload),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> runGenerationGuardrail(String projectId) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/guardrail'),
     );
     _throwIfBad(response);
     return GenerationProject.fromJson(

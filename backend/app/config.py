@@ -54,6 +54,15 @@ WHISPER_FORCE_PT_CHANNELS = (
 )
 MAX_VIDEOS_PER_RUN = int(os.getenv("MAX_VIDEOS_PER_RUN", "5"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GENERATION_ENGINE = os.getenv("GENERATION_ENGINE", "local").strip().lower()
+GENERATION_AI_PROVIDER = os.getenv("GENERATION_AI_PROVIDER", "none").strip().lower()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GENERATION_REQUIRE_EXTERNAL_AI = (
+    os.getenv("GENERATION_REQUIRE_EXTERNAL_AI", "false").lower() == "true"
+)
+GENERATION_GEMINI_MODEL = os.getenv(
+    "GENERATION_GEMINI_MODEL", "gemini-2.5-flash-lite"
+).strip()
 MIN_CLIP_SECONDS = int(os.getenv("MIN_CLIP_SECONDS", "60"))
 MAX_CLIP_SECONDS = int(os.getenv("MAX_CLIP_SECONDS", "150"))
 CLIP_END_EXTENSION_SECONDS = int(os.getenv("CLIP_END_EXTENSION_SECONDS", "15"))
