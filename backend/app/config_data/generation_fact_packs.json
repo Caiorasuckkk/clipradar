@@ -1,0 +1,130 @@
+{
+  "fact_packs": [
+    {
+      "id": "world_cup_2014_neymar",
+      "match_terms": [
+        "copa do mundo 2014 neymar",
+        "copa 2014 neymar",
+        "neymar copa do mundo 2014",
+        "brasil colombia neymar zuniga",
+        "brasil colômbia neymar zúñiga"
+      ],
+      "subject": "Neymar na Copa do Mundo de 2014",
+      "key_entities": ["Neymar", "Brasil", "Colômbia", "Zúñiga", "Alemanha"],
+      "timeline": [
+        "Brasil enfrentou a Colômbia nas quartas de final da Copa de 2014.",
+        "Neymar sofreu uma joelhada nas costas de Zúñiga.",
+        "A lesão tirou Neymar do restante da Copa.",
+        "Sem Neymar, o Brasil enfrentou a Alemanha na semifinal.",
+        "O Brasil perdeu por 7x1."
+      ],
+      "key_facts": [
+        "Neymar era o principal jogador da seleção brasileira em 2014.",
+        "A lesão ocorreu no jogo contra a Colômbia.",
+        "Neymar não jogou a semifinal contra a Alemanha.",
+        "A ausência dele aumentou o peso emocional antes do 7x1."
+      ],
+      "conflict": "O Brasil ainda estava vivo na Copa, mas perdeu sua maior referência técnica e emocional.",
+      "consequence": "A semifinal contra a Alemanha aconteceu em um clima de choque, pressão e insegurança.",
+      "emotional_angle": "A queda da maior esperança brasileira antes do jogo mais traumático da seleção.",
+      "fact_check_notes": [
+        "Confirmar detalhes médicos da lesão de Neymar.",
+        "Confirmar minuto/lance exato se for usado no roteiro.",
+        "Confirmar placar e fase da Copa."
+      ],
+      "confidence": "high",
+      "source_mode": "local_knowledge"
+    },
+    {
+      "id": "world_cup_2014_brazil_germany_7x1",
+      "match_terms": [
+        "copa do mundo 2014 brasil alemanha 7x1",
+        "brasil alemanha 7x1",
+        "7x1 copa 2014",
+        "brasil x alemanha 2014"
+      ],
+      "subject": "Brasil x Alemanha na Copa do Mundo de 2014",
+      "key_entities": ["Brasil", "Alemanha", "Belo Horizonte", "Mineirão", "7x1"],
+      "timeline": [
+        "Brasil e Alemanha se enfrentaram na semifinal da Copa de 2014.",
+        "O jogo aconteceu no Mineirão, em Belo Horizonte.",
+        "A Alemanha abriu grande vantagem ainda no primeiro tempo.",
+        "O placar terminou em 7x1 para a Alemanha.",
+        "A derrota virou um dos maiores traumas da história da seleção brasileira."
+      ],
+      "key_facts": [
+        "O 7x1 aconteceu na semifinal da Copa de 2014.",
+        "O Brasil jogou sem Neymar, lesionado, e sem Thiago Silva, suspenso.",
+        "A Alemanha venceu por 7x1.",
+        "O resultado marcou profundamente a memória do futebol brasileiro."
+      ],
+      "conflict": "A seleção brasileira carregava a expectativa de vencer em casa, mas entrou fragilizada em uma semifinal histórica.",
+      "consequence": "O 7x1 virou símbolo de colapso emocional, técnico e coletivo.",
+      "emotional_angle": "O instante em que uma festa nacional virou trauma.",
+      "fact_check_notes": [
+        "Confirmar ausências de Neymar e Thiago Silva.",
+        "Confirmar local, fase e placar antes de publicar."
+      ],
+      "confidence": "high",
+      "source_mode": "local_knowledge"
+    },
+    {
+      "id": "world_cup_in_brazil",
+      "match_terms": [
+        "copa do mundo no brasil",
+        "copa no brasil",
+        "brasil sediando copa"
+      ],
+      "subject": "A pressão de jogar uma Copa do Mundo no Brasil",
+      "key_entities": ["Brasil", "seleção brasileira", "torcida brasileira", "Copa do Mundo"],
+      "timeline": [
+        "Quando o Brasil sedia uma Copa, a expectativa ultrapassa o futebol.",
+        "A seleção passa a carregar uma cobrança emocional nacional.",
+        "Cada jogo vira parte de uma narrativa coletiva.",
+        "Uma derrota em casa ganha peso simbólico maior."
+      ],
+      "key_facts": [
+        "O Brasil sediou a Copa do Mundo de 2014.",
+        "Jogar em casa aumentou a expectativa popular sobre a seleção.",
+        "A pressão emocional é parte central da memória brasileira sobre aquela Copa."
+      ],
+      "conflict": "Jogar em casa parece vantagem, mas também aumenta a cobrança e o medo de fracassar diante da própria torcida.",
+      "consequence": "Cada resultado ganha dimensão nacional e emocional.",
+      "emotional_angle": "O peso invisível de tentar vencer diante de um país inteiro.",
+      "fact_check_notes": [
+        "Adicionar fonte se citar pesquisas, datas específicas ou números de audiência."
+      ],
+      "confidence": "medium",
+      "source_mode": "local_knowledge"
+    },
+    {
+      "id": "neymar_brazil_national_team",
+      "match_terms": [
+        "neymar seleção brasileira",
+        "neymar selecao brasileira",
+        "neymar brasil",
+        "neymar seleção"
+      ],
+      "subject": "Neymar como referência da seleção brasileira",
+      "key_entities": ["Neymar", "Brasil", "seleção brasileira", "torcida"],
+      "timeline": [
+        "Neymar se tornou uma das principais referências técnicas da seleção brasileira.",
+        "A expectativa sobre ele cresceu em competições internacionais.",
+        "Sua presença ou ausência costuma mudar o clima emocional em torno da equipe."
+      ],
+      "key_facts": [
+        "Neymar é um dos jogadores mais importantes da seleção brasileira em sua geração.",
+        "A torcida frequentemente associa Neymar à esperança de desequilíbrio individual.",
+        "Lesões e ausências de Neymar já tiveram grande impacto emocional em competições da seleção."
+      ],
+      "conflict": "A seleção busca força coletiva, mas muitas vezes concentra esperança demais em um único jogador.",
+      "consequence": "Quando Neymar não está disponível, a cobrança sobre o time muda de forma brusca.",
+      "emotional_angle": "O peso de ser tratado como a maior esperança de um país.",
+      "fact_check_notes": [
+        "Confirmar números, jogos e competições se forem mencionados no roteiro."
+      ],
+      "confidence": "medium",
+      "source_mode": "local_knowledge"
+    }
+  ]
+}

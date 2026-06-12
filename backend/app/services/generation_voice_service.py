@@ -68,6 +68,7 @@ def generate_voice_for_project(project_id: str, voice: str, rate: str = "+0%", p
             "voice_rate": rate,
             "voice_pitch": pitch,
             "voice_error": "",
+            "voice_outdated": False,
         },
     )
     try:
@@ -102,6 +103,7 @@ def generate_voice_for_project(project_id: str, voice: str, rate: str = "+0%", p
             "voice_duration_seconds": duration,
             "voice_generated_at": datetime.utcnow().isoformat(),
             "voice_error": "",
+            "voice_outdated": False,
         },
     )
     return {"project": updated or project, "audio_url": f"/generation/projects/{project_id}/voice/audio"}
@@ -139,6 +141,7 @@ def delete_voice_file(project_id: str) -> dict[str, Any]:
             "voice_duration_seconds": None,
             "voice_generated_at": "",
             "voice_error": "",
+            "voice_outdated": False,
         },
     )
     return {"project": updated or project, "deleted": True}

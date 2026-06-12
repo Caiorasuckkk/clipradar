@@ -9,6 +9,7 @@ from app import config
 
 
 FACT_PACKS_PATH = config.STORAGE_VIDEOS_DIR.parent / "config" / "generation_fact_packs.json"
+DEFAULT_FACT_PACKS_PATH = Path(__file__).resolve().parents[1] / "config_data" / "generation_fact_packs.json"
 ABSTRACT_PATTERNS = [
     "um detalhe",
     "detalhe escondido",
@@ -179,10 +180,50 @@ def repair_generic_script_with_brief(
             "Mas parte daquela história começou antes, no momento em que Neymar caiu no gramado.",
             "Você acha que aquela semifinal teria sido diferente com Neymar em campo?",
         ]
+        if duration_seconds >= 90:
+            lines = [
+                "Em 2014, Neymar não era só mais um jogador da seleção brasileira.",
+                "Ele era a principal esperança técnica e emocional de um país inteiro.",
+                "Nas quartas de final, o Brasil enfrentou a Colômbia em um jogo pesado.",
+                "A seleção venceu, avançou, e parecia continuar viva no sonho da Copa em casa.",
+                "Só que no fim daquele jogo veio o lance que mudou o clima do torneio.",
+                "Neymar levou uma joelhada nas costas de Zúñiga e caiu no gramado.",
+                "A lesão tirou o camisa 10 do restante da Copa.",
+                "A notícia foi um choque porque o Brasil perdeu sua maior referência antes da semifinal.",
+                "Sem Neymar, a equipe chegou para enfrentar a Alemanha tentando se reorganizar às pressas.",
+                "Não era só uma ausência técnica. Era uma ausência emocional.",
+                "A torcida ainda tentava acreditar, mas o clima já era de tensão.",
+                "Quando veio o 7x1, o mundo olhou para a semifinal como um desastre isolado.",
+                "Mas parte daquele colapso começou antes, no momento em que Neymar saiu da Copa.",
+                "A pergunta que fica é difícil: com Neymar em campo, aquela noite teria sido diferente?",
+            ]
+        if duration_seconds >= 120:
+            lines = [
+                "A Copa de 2014 no Brasil tinha uma carga emocional enorme antes mesmo de começar.",
+                "Para muita gente, Neymar era o rosto daquele sonho.",
+                "Ele carregava a camisa 10, a expectativa da torcida e a sensação de que algo especial ainda podia acontecer.",
+                "Nas quartas de final, o Brasil enfrentou a Colômbia em um jogo tenso.",
+                "A seleção venceu por 2 a 1 e garantiu vaga na semifinal.",
+                "Mas a vitória veio junto com uma notícia devastadora.",
+                "No fim do jogo, Neymar levou uma joelhada nas costas de Zúñiga.",
+                "Ele caiu no gramado, sentiu muita dor e precisou deixar a partida.",
+                "Depois veio a confirmação: Neymar estava fora do restante da Copa.",
+                "A seleção perdeu seu principal jogador antes do jogo mais importante do torneio.",
+                "E isso mudou o ambiente do Brasil inteiro.",
+                "Sem Neymar, o time precisava enfrentar a Alemanha sem sua maior referência técnica.",
+                "Também jogava sem a mesma confiança emocional que vinha carregando até ali.",
+                "A semifinal deixou de ser apenas um jogo por vaga na final.",
+                "Virou uma tentativa de sobreviver a um choque que ainda estava fresco.",
+                "Quando a Alemanha começou a marcar um gol atrás do outro, o Brasil pareceu desmoronar.",
+                "O 7x1 virou o símbolo máximo daquele colapso.",
+                "Mas a história não começou no primeiro gol alemão.",
+                "Ela começou antes, quando Neymar caiu contra a Colômbia e o sonho brasileiro perdeu seu maior personagem.",
+                "Você acha que o 7x1 teria acontecido do mesmo jeito com Neymar em campo?",
+            ]
         return {
             "title": "O lance que mudou a Copa do Brasil em 2014",
             "hook": "Todo mundo lembra do 7x1... mas a Copa do Brasil começou a desmoronar antes da Alemanha.",
-            "script_lines": lines if duration_seconds >= 40 else lines[:6] + [lines[-1]],
+            "script_lines": lines,
             "visual_context": [
                 "Imagem de estádio cheio na Copa de 2014",
                 "Brasil contra Colômbia nas quartas de final",
@@ -215,10 +256,11 @@ def repair_generic_script_with_brief(
 
 
 def _load_fact_packs() -> list[dict[str, Any]]:
-    if not FACT_PACKS_PATH.exists():
+    path = FACT_PACKS_PATH if FACT_PACKS_PATH.exists() else DEFAULT_FACT_PACKS_PATH
+    if not path.exists():
         return []
     try:
-        payload = json.loads(FACT_PACKS_PATH.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return []
     packs = payload.get("fact_packs", []) if isinstance(payload, dict) else []

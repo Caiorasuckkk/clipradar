@@ -13,6 +13,11 @@ from app.services.generation_engine_service import (
     generate_engine_script,
 )
 from app.services.generation_script_quality_service import score_generation_script
+from app.services.generation_watchability_service import (
+    content_format_label,
+    normalize_content_format,
+    score_watchability,
+)
 
 
 PROJECTS_PATH = config.STORAGE_GENERATION_DIR / "projects.json"
@@ -107,16 +112,32 @@ def generate_script(
     niche: str = "",
     topic: str = "",
     duration_seconds: int = 45,
+    duration_preset: str = "",
     tone: str = "curioso",
     language: str = "pt-BR",
+    force_research: bool = False,
+    provider: str = "auto",
+    script_depth: str = "normal",
+    narrative_style: str = "",
+    content_format: str = "manual_topic",
+    extra_context: str = "",
+    opportunity_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return generate_engine_script(
         idea=idea,
         niche=niche,
         topic=topic,
         duration_seconds=duration_seconds,
+        duration_preset=duration_preset,
         tone=tone,
         language=language,
+        force_research=force_research,
+        provider_override=provider,
+        script_depth=script_depth,
+        narrative_style=narrative_style,
+        content_format=content_format,
+        extra_context=extra_context,
+        opportunity_data=opportunity_data or {},
     )
 
 
@@ -131,8 +152,23 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "fact_check_notes": payload.get("fact_check_notes"),
         "factual_brief": payload.get("factual_brief"),
         "estimated_duration_seconds": payload.get("estimated_duration_seconds"),
+        "requested_duration_seconds": payload.get("requested_duration_seconds"),
+        "duration_seconds": payload.get("duration_seconds"),
+        "narrative_plan": payload.get("narrative_plan"),
+        "story_beats": payload.get("story_beats"),
+        "depth_score": payload.get("depth_score"),
+        "narrative_score": payload.get("narrative_score"),
+        "retention_score": payload.get("retention_score"),
+        "content_format": payload.get("content_format"),
+        "creation_mode": payload.get("creation_mode"),
+        "opportunity_data": payload.get("opportunity_data"),
+        "concrete_promise": payload.get("concrete_promise"),
+        "viewer_reason_to_watch": payload.get("viewer_reason_to_watch"),
     }
     quality = score_generation_script(quality_payload)
+    watchability = score_watchability({**payload, **quality_payload})
+    creation_mode = _creation_mode(payload.get("creation_mode"))
+    content_format = normalize_content_format(payload.get("content_format"), creation_mode)
     return {
         "project_id": str(payload.get("project_id") or f"gen_{uuid.uuid4().hex[:12]}"),
         "title": _clean(payload.get("title")) or "Projeto sem título",
@@ -141,15 +177,78 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "tone": _clean(payload.get("tone")) or "curioso",
         "status": _status(payload.get("status")),
         "idea": _clean(payload.get("idea")),
+        "creation_mode": _creation_mode(payload.get("creation_mode")),
+        "creation_mode_label": _creation_mode_label(payload.get("creation_mode"), payload.get("creation_mode_label")),
+        "input_topic": _clean(payload.get("input_topic")),
+        "input_idea": _clean(payload.get("input_idea")),
+        "input_script": _clean_multiline(payload.get("input_script")),
+        "input_niche": _clean(payload.get("input_niche")),
+        "input_language": _clean(payload.get("input_language")) or _clean(payload.get("language")) or "pt-BR",
+        "input_tone": _clean(payload.get("input_tone")) or _clean(payload.get("tone")) or "curioso",
+        "input_created_at": _clean(payload.get("input_created_at")) or str(payload.get("created_at") or _now()),
+        "opportunity_data": payload.get("opportunity_data") if isinstance(payload.get("opportunity_data"), dict) else {},
+        "script_import_status": _script_import_status(payload.get("script_import_status")),
+        "creation_warnings": _string_list(payload.get("creation_warnings")),
+        "content_format": content_format,
+        "content_format_label": _clean(payload.get("content_format_label")) or content_format_label(content_format),
+        "concrete_promise": _clean(payload.get("concrete_promise")) or watchability["concrete_promise"],
+        "viewer_reason_to_watch": _clean(payload.get("viewer_reason_to_watch")) or watchability["viewer_reason_to_watch"],
+        "watchability_score": _float_or_none(payload.get("watchability_score"))
+        if payload.get("watchability_score") is not None
+        else watchability["watchability_score"],
+        "needs_more_context": _bool(payload.get("needs_more_context")) or watchability["needs_more_context"],
+        "missing_context_fields": _string_list(payload.get("missing_context_fields"))
+        or watchability["missing_context_fields"],
+        "opportunity_script_repair_applied": _bool(payload.get("opportunity_script_repair_applied")),
+        "opportunity_script_repair_reason": _clean(payload.get("opportunity_script_repair_reason")),
+        "extra_context": _clean_multiline(payload.get("extra_context")),
+        "watchability_positive_signals": _string_list(payload.get("watchability_positive_signals"))
+        or watchability["watchability_positive_signals"],
+        "watchability_negative_signals": _string_list(payload.get("watchability_negative_signals"))
+        or watchability["watchability_negative_signals"],
         "hook": _clean(payload.get("hook")),
         "script_lines": _string_list(payload.get("script_lines")),
         "cta": _clean(payload.get("cta")),
         "hashtags": _string_list(payload.get("hashtags")),
         "visual_context": _string_list(payload.get("visual_context")),
         "factual_brief": payload.get("factual_brief") if isinstance(payload.get("factual_brief"), dict) else {},
+        "research_brief": payload.get("research_brief") if isinstance(payload.get("research_brief"), dict) else {},
+        "research_cache_hit": _bool(payload.get("research_cache_hit")),
+        "source_urls": _string_list(payload.get("source_urls")),
+        "source_titles": _string_list(payload.get("source_titles")),
+        "grounding_used": _bool(payload.get("grounding_used")),
+        "grounding_available": _bool(payload.get("grounding_available")),
+        "search_queries": _string_list(payload.get("search_queries")),
         "factual_grounding_used": _bool(payload.get("factual_grounding_used")),
         "factual_grounding_confidence": _clean(payload.get("factual_grounding_confidence")) or "low",
         "specificity_score": _float_or_none(payload.get("specificity_score")),
+        "script_depth": _clean(payload.get("script_depth")) or "normal",
+        "script_depth_label": _clean(payload.get("script_depth_label")) or "Normal",
+        "narrative_style": _clean(payload.get("narrative_style")) or "dramatic",
+        "narrative_style_label": _clean(payload.get("narrative_style_label")) or "Dramático",
+        "narrative_plan": payload.get("narrative_plan") if isinstance(payload.get("narrative_plan"), dict) else {},
+        "story_beats": payload.get("story_beats") if isinstance(payload.get("story_beats"), list) else [],
+        "claim_evidence_pairs": payload.get("claim_evidence_pairs")
+        if isinstance(payload.get("claim_evidence_pairs"), list)
+        else [],
+        "depth_score": _float_or_none(payload.get("depth_score")),
+        "narrative_score": _float_or_none(payload.get("narrative_score")),
+        "retention_score": _float_or_none(payload.get("retention_score")),
+        "shallow_script_detected": _bool(payload.get("shallow_script_detected")),
+        "narrative_repair_applied": _bool(payload.get("narrative_repair_applied")),
+        "narrative_repair_reason": _clean(payload.get("narrative_repair_reason")),
+        "requested_duration_seconds": _float_or_none(payload.get("requested_duration_seconds")),
+        "duration_preset_label": _clean(payload.get("duration_preset_label")),
+        "script_word_count": _int(payload.get("script_word_count")),
+        "narration_word_count": _int(payload.get("narration_word_count")),
+        "narration_text_preview": _clean(payload.get("narration_text_preview")),
+        "force_research_used": _bool(payload.get("force_research_used")),
+        "llm_call_count": _int(payload.get("llm_call_count")),
+        "research_call_count": _int(payload.get("research_call_count")),
+        "script_call_count": _int(payload.get("script_call_count")),
+        "last_llm_error": _clean(payload.get("last_llm_error")),
+        "last_llm_provider": _clean(payload.get("last_llm_provider")),
+        "last_llm_model": _clean(payload.get("last_llm_model")),
         "engine_mode": _engine_mode(payload.get("engine_mode")),
         "provider": _provider(payload.get("provider")),
         "fallback_used": _bool(payload.get("fallback_used")),
@@ -173,6 +272,8 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "fact_check_required": _bool(payload.get("fact_check_required")),
         "copyright_review_required": _bool(payload.get("copyright_review_required")),
         "platform_notes": _string_list(payload.get("platform_notes")),
+        "visual_status": _visual_status(payload.get("visual_status")),
+        "visual_items": _visual_items(payload.get("visual_items")),
         "voice_status": _voice_status(payload.get("voice_status")),
         "voice_name": _clean(payload.get("voice_name")),
         "voice_provider": _clean(payload.get("voice_provider")),
@@ -183,6 +284,7 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "voice_duration_seconds": _float_or_none(payload.get("voice_duration_seconds")),
         "voice_generated_at": _clean(payload.get("voice_generated_at")),
         "voice_error": _clean(payload.get("voice_error")),
+        "voice_outdated": _bool(payload.get("voice_outdated")),
         "created_at": str(payload.get("created_at") or _now()),
         "updated_at": str(payload.get("updated_at") or _now()),
     }
@@ -216,6 +318,43 @@ def _status(value: object) -> str:
     return text if text in {"idea", "script", "ready_for_voice", "ready_for_visual", "ready_for_render", "archived"} else "idea"
 
 
+def _visual_status(value: object) -> str:
+    text = str(value or "none")
+    return text if text in {"none", "draft", "ready", "failed"} else "none"
+
+
+def _creation_mode(value: object) -> str:
+    text = str(value or "legacy").strip().lower()
+    return text if text in {"opportunity", "manual_idea", "ready_script", "legacy"} else "legacy"
+
+
+def _creation_mode_label(value: object, label: object = "") -> str:
+    explicit = _clean(label)
+    if explicit:
+        return explicit
+    return {
+        "opportunity": "Em alta",
+        "manual_idea": "Minha ideia",
+        "ready_script": "Roteiro pronto",
+        "legacy": "Legado",
+    }[_creation_mode(value)]
+
+
+def _script_import_status(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in {"parsed", "needs_review", "failed"} else ""
+
+
+def _visual_items(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            items.append(item)
+    return items
+
+
 def _engine_mode(value: object) -> str:
     text = str(value or "local").strip().lower()
     return text if text in {"local", "canal_dark"} else "local"
@@ -241,6 +380,11 @@ def _clean(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _clean_multiline(value: object) -> str:
+    lines = [re.sub(r"\s+", " ", line).strip() for line in str(value or "").splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
 def _normalize(value: str) -> str:
     return _clean(value).lower()
 
@@ -261,6 +405,13 @@ def _float_or_none(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _default_topic(niche: str) -> str:

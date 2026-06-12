@@ -74,6 +74,7 @@ def score_generation_script(payload: dict[str, Any]) -> dict[str, Any]:
     estimated_duration = _number(
         payload.get("estimated_duration_seconds") or payload.get("duration_seconds")
     )
+    requested_duration = _number(payload.get("requested_duration_seconds") or payload.get("duration_seconds"))
     narration_validation = validate_script_is_narration(lines)
     specificity = validate_specificity(
         script_lines=lines,
@@ -161,12 +162,30 @@ def score_generation_script(payload: dict[str, Any]) -> dict[str, Any]:
         score -= 0.5
         negative.append("contexto_visual_ausente")
 
-    if 20 <= estimated_duration <= 90:
+    if 20 <= estimated_duration <= 130:
         score += 0.5
         positive.append("duracao_provavel_boa")
     elif estimated_duration:
         score -= 0.4
         negative.append("duracao_fora_do_ideal")
+
+    if requested_duration:
+        delta = abs(estimated_duration - requested_duration)
+        if delta <= max(12, requested_duration * 0.25):
+            score += 0.8
+            positive.append("duration_match")
+        else:
+            score -= 1.0
+            negative.append("duration_mismatch")
+        if requested_duration >= 120 and len(lines) < 18:
+            score -= 1.2
+            negative.append("too_short_for_duration")
+        if requested_duration >= 90 and len(lines) < 12:
+            score -= 0.8
+            negative.append("too_short_for_duration")
+        if requested_duration <= 60 and len(lines) > 13:
+            score -= 0.8
+            negative.append("too_long_for_duration")
 
     if _contains_fact_check_marker(lines + [hook]):
         if fact_check_notes:
@@ -188,6 +207,7 @@ def score_generation_script(payload: dict[str, Any]) -> dict[str, Any]:
     if factual_brief:
         if "factual_grounding_used" in specificity["positive_signals"]:
             score += 1.0
+            positive.append("research_brief_used")
         if "specific_entities_present" in specificity["positive_signals"]:
             score += 0.8
         if "concrete_conflict" in specificity["positive_signals"]:

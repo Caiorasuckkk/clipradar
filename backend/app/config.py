@@ -6,7 +6,11 @@ from dotenv import load_dotenv
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-load_dotenv(BACKEND_DIR / ".env", override=True)
+BACKEND_ENV_PATH = BACKEND_DIR / ".env"
+if BACKEND_ENV_PATH.exists():
+    load_dotenv(BACKEND_ENV_PATH, override=True)
+else:
+    load_dotenv(override=True)
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
 _raw_youtube_api_keys = os.getenv("YOUTUBE_API_KEYS", "")
@@ -60,9 +64,28 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GENERATION_REQUIRE_EXTERNAL_AI = (
     os.getenv("GENERATION_REQUIRE_EXTERNAL_AI", "false").lower() == "true"
 )
-GENERATION_GEMINI_MODEL = os.getenv(
-    "GENERATION_GEMINI_MODEL", "gemini-2.5-flash-lite"
-).strip()
+GENERATION_USE_WEB_GROUNDING = (
+    os.getenv("GENERATION_USE_WEB_GROUNDING", "false").lower() == "true"
+)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
+GEMINI_RESEARCH_MODEL = os.getenv("GEMINI_RESEARCH_MODEL", GEMINI_MODEL).strip()
+GEMINI_SCRIPT_MODEL = os.getenv("GEMINI_SCRIPT_MODEL", GEMINI_MODEL).strip()
+GENERATION_GEMINI_MODEL = os.getenv("GENERATION_GEMINI_MODEL", GEMINI_MODEL).strip()
+GENERATION_MAX_RESEARCH_CALLS_PER_PROJECT = int(
+    os.getenv("GENERATION_MAX_RESEARCH_CALLS_PER_PROJECT", "3")
+)
+GENERATION_MAX_SCRIPT_CALLS_PER_PROJECT = int(
+    os.getenv("GENERATION_MAX_SCRIPT_CALLS_PER_PROJECT", "3")
+)
+GENERATION_RESEARCH_CACHE_TTL_DAYS = int(
+    os.getenv("GENERATION_RESEARCH_CACHE_TTL_DAYS", "7")
+)
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "").strip()
+GENERATION_VISUAL_PROVIDER = os.getenv("GENERATION_VISUAL_PROVIDER", "local").strip().lower()
+GENERATION_ENABLE_STOCK_SEARCH = (
+    os.getenv("GENERATION_ENABLE_STOCK_SEARCH", "false").lower() == "true"
+)
+GENERATION_MAX_STOCK_RESULTS = int(os.getenv("GENERATION_MAX_STOCK_RESULTS", "8"))
 MIN_CLIP_SECONDS = int(os.getenv("MIN_CLIP_SECONDS", "60"))
 MAX_CLIP_SECONDS = int(os.getenv("MAX_CLIP_SECONDS", "150"))
 CLIP_END_EXTENSION_SECONDS = int(os.getenv("CLIP_END_EXTENSION_SECONDS", "15"))

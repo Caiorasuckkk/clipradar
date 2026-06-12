@@ -8,13 +8,39 @@ import requests
 
 from app import config
 from app.services.generation_factual_grounding_service import (
-    generate_factual_brief,
     repair_generic_script_with_brief,
     validate_specificity,
+)
+from app.services.generation_llm_provider_service import (
+    generate_ideas as provider_generate_ideas,
+    generate_narrative_plan as provider_generate_narrative_plan,
+    generate_research_brief as provider_generate_research_brief,
+    generate_script_from_research as provider_generate_script_from_research,
+    get_provider_status,
+)
+from app.services.generation_narrative_quality_service import (
+    build_script_from_narrative_plan,
+    claim_evidence_pairs_from_brief,
+    generate_narrative_plan as local_generate_narrative_plan,
+    narrative_style_label,
+    normalize_narrative_style,
+    normalize_script_depth,
+    repair_shallow_script_with_narrative_plan,
+    score_narrative_quality,
+    script_depth_label,
 )
 from app.services.generation_script_quality_service import (
     score_generation_script,
     validate_script_is_narration,
+)
+from app.services.generation_watchability_service import (
+    build_format_script,
+    context_from_text,
+    enrich_opportunity_context,
+    normalize_content_format,
+    opportunity_research_brief,
+    repair_generic_opportunity_script,
+    score_watchability,
 )
 
 
@@ -33,19 +59,33 @@ CANAL_DARK_FEATURES = [
 def engine_status() -> dict[str, Any]:
     mode = _engine_mode()
     provider = _provider()
-    has_gemini_key = bool(config.GEMINI_API_KEY)
-    external_available = provider == "gemini" and has_gemini_key
+    provider_status = get_provider_status()
+    external_available = provider == "gemini" and bool(provider_status["gemini_available"])
     return {
         "engine_mode": mode,
         "provider": provider,
         "configured_engine": config.GENERATION_ENGINE,
         "configured_provider": config.GENERATION_AI_PROVIDER,
         "external_ai_available": external_available,
+        "gemini_available": bool(provider_status["gemini_available"]),
+        "grounding_enabled": bool(provider_status["grounding_enabled"]),
+        "grounding_supported": provider_status["grounding_supported"],
         "fallback_available": True,
         "require_external_ai": config.GENERATION_REQUIRE_EXTERNAL_AI,
-        "gemini_configured": has_gemini_key,
-        "gemini_model": config.GENERATION_GEMINI_MODEL,
-        "features": CANAL_DARK_FEATURES if mode == "canal_dark" else ["local_templates"],
+        "gemini_configured": bool(provider_status["gemini_configured"]),
+        "gemini_model": config.GEMINI_SCRIPT_MODEL,
+        "models": provider_status["models"],
+        "limits": provider_status["limits"],
+        "features": {
+            "ideas": True,
+            "research_brief": True,
+            "scripts": True,
+            "voice": True,
+            "visual_planning": False,
+            "render": False,
+            "publishing": False,
+        },
+        "feature_names": CANAL_DARK_FEATURES if mode == "canal_dark" else ["local_templates"],
     }
 
 
@@ -57,13 +97,16 @@ def generate_engine_ideas(
 ) -> list[dict[str, Any]]:
     mode = _engine_mode()
     provider = _provider()
-    if mode == "canal_dark" and provider == "gemini" and config.GEMINI_API_KEY:
-        try:
-            return _ideas_with_gemini(niche, topic, language, tone)
-        except Exception:
-            if config.GENERATION_REQUIRE_EXTERNAL_AI:
-                raise
-            return _local_ideas(niche, topic, language, tone, mode, provider, fallback_used=True)
+    if mode == "canal_dark" and provider == "gemini":
+        return provider_generate_ideas(
+            niche=niche,
+            topic=topic,
+            language=language,
+            tone=tone,
+            local_fallback=lambda: _local_ideas(
+                niche, topic, language, tone, mode, provider, fallback_used=True
+            ),
+        )
     if mode == "canal_dark" and config.GENERATION_REQUIRE_EXTERNAL_AI:
         raise RuntimeError("external_generation_ai_unavailable")
     return _local_ideas(
@@ -82,38 +125,125 @@ def generate_engine_script(
     niche: str = "",
     topic: str = "",
     duration_seconds: int = 45,
+    duration_preset: str = "",
     tone: str = "curioso",
     language: str = "pt-BR",
+    force_research: bool = False,
+    provider_override: str = "auto",
+    script_depth: str = "normal",
+    narrative_style: str = "",
+    content_format: str = "manual_topic",
+    extra_context: str = "",
+    opportunity_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     mode = _engine_mode()
-    provider = _provider()
-    factual_brief = generate_factual_brief(
+    provider = _provider() if provider_override == "auto" else ("gemini" if provider_override == "gemini" else "none")
+    duration = _normalize_duration(duration_seconds, duration_preset)
+    depth = normalize_script_depth(script_depth)
+    style = normalize_narrative_style(narrative_style, tone=tone)
+    parsed_context = context_from_text(extra_context)
+    opportunity_seed = dict(opportunity_data or {})
+    for key, value in parsed_context.items():
+        if value:
+            opportunity_seed[key] = value
+    opportunity = enrich_opportunity_context(opportunity_seed)
+    fmt = normalize_content_format(content_format or opportunity.get("content_format"), "opportunity" if opportunity_data else "")
+    research_topic = " — ".join(part for part in [topic or idea, extra_context] if _clean(part))
+    factual_brief = provider_generate_research_brief(
         niche=niche,
-        topic=topic or idea,
-        idea=idea,
+        topic=research_topic,
         language=language,
+        tone=tone,
+        force_research=force_research,
+        provider_override=provider_override,
     )
-    if mode == "canal_dark" and provider == "gemini" and config.GEMINI_API_KEY:
-        try:
-            return _script_with_gemini(idea, niche, topic, duration_seconds, tone, language, factual_brief)
-        except Exception:
-            if config.GENERATION_REQUIRE_EXTERNAL_AI:
-                raise
-            return _local_script(idea, niche, topic, duration_seconds, tone, language, mode, provider, True, factual_brief)
+    if opportunity_data:
+        factual_brief = opportunity_research_brief(opportunity, factual_brief)
+    elif extra_context:
+        factual_brief.update(context_from_text(extra_context))
+        factual_brief["extra_context"] = extra_context
+        factual_brief["content_format"] = fmt
+    narrative_plan = provider_generate_narrative_plan(
+        research_brief=factual_brief,
+        duration_seconds=duration,
+        script_depth=depth,
+        narrative_style=style,
+        provider_override=provider_override,
+        local_fallback=lambda: local_generate_narrative_plan(factual_brief, duration, depth, style),
+    )
+    if mode == "canal_dark" and provider == "gemini":
+        payload = provider_generate_script_from_research(
+            research_brief=factual_brief,
+            narrative_plan=narrative_plan,
+            niche=niche,
+            topic=topic or idea,
+            duration_seconds=duration,
+            tone=tone,
+            language=language,
+            script_depth=depth,
+            narrative_style=style,
+            local_fallback=lambda: _local_script(
+                idea, niche, topic, duration, tone, language, mode, provider, True, factual_brief, narrative_plan, depth, style
+            ),
+            provider_override=provider_override,
+        )
+        payload.setdefault("factual_brief", factual_brief)
+        payload.setdefault("research_brief", factual_brief)
+        payload.setdefault("fact_check_notes", factual_brief.get("fact_check_notes", []))
+        payload.setdefault("estimated_duration_seconds", duration)
+        payload.setdefault("duration_seconds", duration)
+        payload["requested_duration_seconds"] = duration
+        payload["duration_preset_label"] = _duration_label(duration)
+        payload["force_research_used"] = bool(force_research)
+        _apply_narrative_metadata(payload, narrative_plan, factual_brief, depth, style)
+        payload.setdefault("voice_style", _voice_style(tone))
+        payload.setdefault("pacing", "narrativo, direto e com pausas curtas")
+        payload.setdefault("niche", _clean(niche) or "geral")
+        payload.setdefault("language", language or "pt-BR")
+        payload.setdefault("tone", tone or "curioso")
+        payload.setdefault("status", "script")
+        payload.setdefault("script_repair_applied", False)
+        payload.setdefault("script_repair_reason", "")
+        payload.update(
+            {
+                "content_format": fmt,
+                "extra_context": extra_context,
+                "opportunity_data": opportunity if opportunity_data else {},
+                "concrete_promise": opportunity.get("concrete_promise", ""),
+                "viewer_reason_to_watch": opportunity.get("viewer_reason_to_watch", ""),
+            }
+        )
+        return _finalize_script_payload(payload, topic or idea, niche, tone, depth, style)
     if mode == "canal_dark" and config.GENERATION_REQUIRE_EXTERNAL_AI:
         raise RuntimeError("external_generation_ai_unavailable")
-    return _local_script(
+    payload = _local_script(
         idea=idea,
         niche=niche,
         topic=topic,
-        duration_seconds=duration_seconds,
+        duration_seconds=duration,
         tone=tone,
         language=language,
         mode=mode,
         provider=provider,
         fallback_used=mode == "canal_dark" and provider != "none",
         factual_brief=factual_brief,
+        narrative_plan=narrative_plan,
+        script_depth=depth,
+        narrative_style=style,
     )
+    payload.update(
+        {
+            "content_format": fmt,
+            "extra_context": extra_context,
+            "opportunity_data": opportunity if opportunity_data else {},
+            "concrete_promise": opportunity.get("concrete_promise", ""),
+            "viewer_reason_to_watch": opportunity.get("viewer_reason_to_watch", ""),
+        }
+    )
+    template = build_format_script(fmt, {**opportunity, **factual_brief, "extra_context": extra_context}, duration)
+    if template:
+        payload.update(template)
+    return _finalize_script_payload(payload, topic or idea, niche, tone, depth, style)
 
 
 def _local_ideas(
@@ -171,15 +301,20 @@ def _local_script(
     provider: str,
     fallback_used: bool,
     factual_brief: dict[str, Any],
+    narrative_plan: dict[str, Any],
+    script_depth: str = "normal",
+    narrative_style: str = "dramatic",
 ) -> dict[str, Any]:
     idea_text = _clean(idea or topic) or "Uma ideia para explicar de forma simples"
     niche_label = _clean(niche) or "geral"
     normalized_niche = _normalize(niche_label)
-    seconds = max(20, min(90, int(duration_seconds or 45)))
-    grounded = (
-        repair_generic_script_with_brief(factual_brief, tone=tone, duration_seconds=seconds)
-        if factual_brief.get("confidence") != "low"
-        else {}
+    seconds = _normalize_duration(duration_seconds)
+    grounded = build_script_from_narrative_plan(
+        research_brief=factual_brief,
+        narrative_plan=narrative_plan,
+        duration_seconds=seconds,
+        script_depth=script_depth,
+        narrative_style=narrative_style,
     )
     hook = _clean(grounded.get("hook")) or _script_hook(idea_text, tone)
     lines = _list(grounded.get("script_lines")) or _script_lines(
@@ -196,16 +331,33 @@ def _local_script(
         "visual_context": _list(grounded.get("visual_context")) or _visual_context(niche_label, idea_text),
         "fact_check_notes": fact_notes,
         "factual_brief": factual_brief,
+        "research_brief": factual_brief,
         "factual_grounding_used": factual_brief.get("confidence") != "low",
         "factual_grounding_confidence": factual_brief.get("confidence", "low"),
         "specificity_score": 0.0,
+        "research_cache_hit": bool(factual_brief.get("research_cache_hit")),
+        "source_urls": _list(factual_brief.get("source_urls")),
+        "source_titles": _list(factual_brief.get("source_titles")),
+        "search_queries": _list(factual_brief.get("search_queries")),
+        "grounding_used": bool(factual_brief.get("grounding_used")),
+        "grounding_available": bool(factual_brief.get("grounding_available")),
+        "grounding_warning": _clean(factual_brief.get("grounding_warning")),
+        "llm_call_count": int(factual_brief.get("research_call_count") or 0),
+        "research_call_count": int(factual_brief.get("research_call_count") or 0),
+        "script_call_count": 0,
+        "last_llm_error": _clean(factual_brief.get("last_llm_error")),
+        "last_llm_provider": _clean(factual_brief.get("last_llm_provider")) or provider,
+        "last_llm_model": _clean(factual_brief.get("last_llm_model")),
         "estimated_duration_seconds": seconds,
         "duration_seconds": seconds,
+        "requested_duration_seconds": seconds,
+        "duration_preset_label": _duration_label(seconds),
+        "force_research_used": bool(factual_brief.get("force_research_used")),
         "voice_style": _voice_style(tone),
         "pacing": "rápido, com pausas curtas depois do hook",
         "engine_mode": mode,
         "provider": provider,
-        "fallback_used": fallback_used,
+        "fallback_used": fallback_used or provider == "none",
         "niche": niche_label,
         "language": language or "pt-BR",
         "tone": tone or "curioso",
@@ -213,7 +365,8 @@ def _local_script(
         "script_repair_applied": False,
         "script_repair_reason": "",
     }
-    return _finalize_script_payload(payload, idea_text, niche_label, tone)
+    _apply_narrative_metadata(payload, narrative_plan, factual_brief, script_depth, narrative_style)
+    return _finalize_script_payload(payload, idea_text, niche_label, tone, script_depth, narrative_style)
 
 
 def _ideas_with_gemini(niche: str, topic: str, language: str, tone: str) -> list[dict[str, Any]]:
@@ -314,7 +467,21 @@ def _finalize_script_payload(
     idea: str,
     niche: str,
     tone: str,
+    script_depth: str = "normal",
+    narrative_style: str = "dramatic",
 ) -> dict[str, Any]:
+    depth = normalize_script_depth(payload.get("script_depth") or script_depth)
+    style = normalize_narrative_style(payload.get("narrative_style") or narrative_style, tone=tone)
+    factual_brief = payload.get("factual_brief") if isinstance(payload.get("factual_brief"), dict) else {}
+    narrative_plan = payload.get("narrative_plan") if isinstance(payload.get("narrative_plan"), dict) else {}
+    if not narrative_plan:
+        narrative_plan = local_generate_narrative_plan(
+            factual_brief,
+            int(payload.get("requested_duration_seconds") or payload.get("estimated_duration_seconds") or 60),
+            depth,
+            style,
+        )
+    _apply_narrative_metadata(payload, narrative_plan, factual_brief, depth, style)
     validation = validate_script_is_narration(payload.get("script_lines"))
     if not validation["is_narration_ready"]:
         repaired = repair_meta_script_to_narration(
@@ -329,12 +496,12 @@ def _finalize_script_payload(
         payload["script_repair_reason"] = ", ".join(reasons[:5]) or "not_narration_ready"
     specificity = validate_specificity(
         script_lines=payload.get("script_lines"),
-        factual_brief=payload.get("factual_brief") if isinstance(payload.get("factual_brief"), dict) else {},
+        factual_brief=factual_brief,
         topic=idea,
     )
-    if not specificity["is_specific"] and payload.get("factual_brief", {}).get("confidence") != "low":
+    if not specificity["is_specific"] and factual_brief.get("confidence") != "low":
         repaired = repair_generic_script_with_brief(
-            factual_brief=payload["factual_brief"],
+            factual_brief=factual_brief,
             tone=tone,
             duration_seconds=int(payload.get("estimated_duration_seconds") or 45),
         )
@@ -343,23 +510,125 @@ def _finalize_script_payload(
         payload["script_repair_reason"] = "generic_script_without_specific_facts"
         specificity = validate_specificity(
             script_lines=payload.get("script_lines"),
-            factual_brief=payload.get("factual_brief"),
+            factual_brief=factual_brief,
             topic=idea,
         )
     payload["specificity_score"] = specificity["specificity_score"]
     payload["factual_grounding_used"] = "factual_grounding_used" in specificity["positive_signals"]
     positives = list(payload.get("script_positive_signals") or []) + specificity["positive_signals"]
     negatives = list(payload.get("script_negative_signals") or []) + specificity["negative_signals"]
+    _add_duration_metadata(payload)
+    requested_duration = _normalize_duration(payload.get("requested_duration_seconds"))
+    if (
+        factual_brief.get("confidence") != "low"
+        and float(payload.get("estimated_duration_seconds") or 0) < requested_duration * 0.65
+    ):
+        repaired = repair_generic_script_with_brief(
+            factual_brief=factual_brief,
+            tone=tone,
+            duration_seconds=requested_duration,
+        )
+        payload.update(repaired)
+        payload["script_repair_applied"] = True
+        payload["script_repair_reason"] = "duration_too_short_for_preset"
+        specificity = validate_specificity(
+            script_lines=payload.get("script_lines"),
+            factual_brief=factual_brief,
+            topic=idea,
+        )
+        payload["specificity_score"] = specificity["specificity_score"]
+        positives += specificity["positive_signals"]
+        negatives += specificity["negative_signals"]
+        _add_duration_metadata(payload)
+    narrative_quality = score_narrative_quality(payload)
+    if narrative_quality["shallow_script_detected"] and factual_brief.get("confidence") != "low":
+        repaired = repair_shallow_script_with_narrative_plan(
+            script=payload,
+            research_brief=factual_brief,
+            narrative_plan=narrative_plan,
+            duration_seconds=requested_duration,
+            script_depth=depth,
+            narrative_style=style,
+        )
+        payload.update(repaired)
+        payload["script_repair_applied"] = True
+        payload["script_repair_reason"] = "shallow_script_rewritten_with_narrative_plan"
+        payload["narrative_repair_applied"] = True
+        payload["narrative_repair_reason"] = "shallow_script_rewritten_with_narrative_plan"
+        _apply_narrative_metadata(payload, narrative_plan, factual_brief, depth, style)
+        _add_duration_metadata(payload)
+        narrative_quality = score_narrative_quality(payload)
     payload.update(score_generation_script(payload))
+    payload.update(
+        {
+            "depth_score": narrative_quality["depth_score"],
+            "narrative_score": narrative_quality["narrative_score"],
+            "retention_score": narrative_quality["retention_score"],
+            "shallow_script_detected": narrative_quality["shallow_script_detected"],
+        }
+    )
     positives += list(payload.get("script_positive_signals") or [])
+    positives += narrative_quality["script_positive_signals"]
     negatives += list(payload.get("script_negative_signals") or [])
+    negatives += narrative_quality["script_negative_signals"]
     payload["script_positive_signals"] = list(dict.fromkeys(positives))
     payload["script_negative_signals"] = list(dict.fromkeys(negatives))
+    if payload.get("shallow_script_detected"):
+        payload["script_quality_tier"] = "good" if payload.get("script_quality_score", 0) >= 6.5 else payload.get("script_quality_tier")
+        payload["script_quality_score"] = min(float(payload.get("script_quality_score") or 0), 7.9)
     if payload.get("script_repair_applied"):
         negatives = list(payload.get("script_negative_signals") or [])
         negatives.append("script_repair_applied")
         payload["script_negative_signals"] = list(dict.fromkeys(negatives))
+    watchability = score_watchability(payload)
+    if (
+        watchability["content_format"] in {"player_watchlist", "match_preview"}
+        and watchability["watchability_score"] < 6.0
+    ):
+        payload = repair_generic_opportunity_script(
+            payload,
+            factual_brief,
+            dict(payload.get("opportunity_data") or {}),
+        )
+        watchability = score_watchability(payload)
+    payload.update(watchability)
+    if (
+        watchability["content_format"]
+        in {"player_watchlist", "match_preview", "news_context", "top_list"}
+        and watchability["watchability_score"] < 6.0
+    ):
+        payload["shallow_script_detected"] = True
+        payload["script_quality_score"] = min(float(payload.get("script_quality_score") or 0), 6.4)
+        payload["script_quality_tier"] = "average" if payload["script_quality_score"] >= 5 else "weak"
+        payload["script_negative_signals"] = list(
+            dict.fromkeys(
+                [
+                    *list(payload.get("script_negative_signals") or []),
+                    *watchability["watchability_negative_signals"],
+                ]
+            )
+        )
     return payload
+
+
+def _apply_narrative_metadata(
+    payload: dict[str, Any],
+    narrative_plan: dict[str, Any],
+    factual_brief: dict[str, Any],
+    script_depth: str,
+    narrative_style: str,
+) -> None:
+    depth = normalize_script_depth(script_depth)
+    style = normalize_narrative_style(narrative_style)
+    payload["script_depth"] = depth
+    payload["script_depth_label"] = script_depth_label(depth)
+    payload["narrative_style"] = style
+    payload["narrative_style_label"] = narrative_style_label(style)
+    payload["narrative_plan"] = narrative_plan if isinstance(narrative_plan, dict) else {}
+    payload["story_beats"] = list(payload["narrative_plan"].get("story_beats") or [])
+    payload["claim_evidence_pairs"] = claim_evidence_pairs_from_brief(factual_brief, payload["narrative_plan"])
+    payload.setdefault("narrative_repair_applied", False)
+    payload.setdefault("narrative_repair_reason", "")
 
 
 def repair_meta_script_to_narration(
@@ -633,6 +902,46 @@ def _narrative_title(topic: str, niche: str) -> str:
 def _is_world_cup_brazil(value: str) -> bool:
     normalized = _normalize(value)
     return ("copa do mundo" in normalized or "copa" in normalized) and "brasil" in normalized
+
+
+def _normalize_duration(duration_seconds: int | float | str | None, duration_preset: str = "") -> int:
+    preset = str(duration_preset or "").strip().lower()
+    if preset in {"60", "60s", "curto"}:
+        return 60
+    if preset in {"90", "90s", "1m30", "medio", "médio"}:
+        return 90
+    if preset in {"120", "120s", "2m", "longo"}:
+        return 120
+    try:
+        value = int(float(duration_seconds or 60))
+    except (TypeError, ValueError):
+        value = 60
+    return min((60, 90, 120), key=lambda option: abs(option - value))
+
+
+def _duration_label(duration_seconds: int | float | str | None) -> str:
+    duration = _normalize_duration(duration_seconds)
+    return {60: "60s", 90: "1m30", 120: "2m"}[duration]
+
+
+def _add_duration_metadata(payload: dict[str, Any]) -> None:
+    requested = _normalize_duration(
+        payload.get("requested_duration_seconds") or payload.get("duration_seconds") or payload.get("estimated_duration_seconds")
+    )
+    lines = [str(line or "").strip() for line in payload.get("script_lines") or [] if str(line or "").strip()]
+    hook = _clean(payload.get("hook"))
+    cta = _clean(payload.get("cta"))
+    narration_text = " ".join(item for item in [hook, *lines, cta] if item).strip()
+    script_text = " ".join(lines)
+    narration_words = re.findall(r"\b[\wÀ-ÿ]+\b", narration_text)
+    script_words = re.findall(r"\b[\wÀ-ÿ]+\b", script_text)
+    estimated = round(max(1, len(narration_words)) / 2.45)
+    payload["requested_duration_seconds"] = requested
+    payload["duration_preset_label"] = _duration_label(requested)
+    payload["script_word_count"] = len(script_words)
+    payload["narration_word_count"] = len(narration_words)
+    payload["narration_text_preview"] = narration_text[:280]
+    payload["estimated_duration_seconds"] = estimated
 
 
 def _list(value: object) -> list[str]:

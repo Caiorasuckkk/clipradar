@@ -252,20 +252,95 @@ class ApiClient {
     required int durationSeconds,
     required String tone,
     required String language,
+    String scriptDepth = 'normal',
+    String narrativeStyle = 'dramatic',
+    String contentFormat = 'manual_topic',
+    String extraContext = '',
   }) async {
     final response = await _client.post(
       _uri('/generation/scripts'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'idea': idea,
+        'topic': idea,
         'niche': niche,
         'duration_seconds': durationSeconds,
         'tone': tone,
         'language': language,
+        'script_depth': scriptDepth,
+        'narrative_style': narrativeStyle,
+        'content_format': contentFormat,
+        'extra_context': extraContext,
       }),
     );
     _throwIfBad(response);
     return GenerationScript.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> regenerateGenerationProjectScript({
+    required String projectId,
+    required int durationSeconds,
+    bool forceResearch = false,
+    String provider = 'auto',
+    String scriptDepth = 'normal',
+    String narrativeStyle = 'dramatic',
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/script/regenerate'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'duration_seconds': durationSeconds,
+        'force_research': forceResearch,
+        'provider': provider,
+        'script_depth': scriptDepth,
+        'narrative_style': narrativeStyle,
+      }),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> improveGenerationProjectScript({
+    required String projectId,
+    required String scriptDepth,
+    required String narrativeStyle,
+    required int durationSeconds,
+    bool preserveFacts = true,
+    bool forceResearch = false,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/script/improve'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'script_depth': scriptDepth,
+        'narrative_style': narrativeStyle,
+        'duration_seconds': durationSeconds,
+        'preserve_facts': preserveFacts,
+        'force_research': forceResearch,
+      }),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> regenerateGenerationProjectResearch({
+    required String projectId,
+    bool forceResearch = true,
+    String provider = 'auto',
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/research/regenerate'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'force_research': forceResearch, 'provider': provider}),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }
@@ -291,6 +366,161 @@ class ApiClient {
     return GenerationProject.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  Future<GenerationProject> createGenerationProjectFromIdea({
+    required String idea,
+    required String niche,
+    required String language,
+    required String tone,
+    required int durationSeconds,
+    String scriptDepth = 'normal',
+    String narrativeStyle = 'dramatic',
+    String contentFormat = 'manual_topic',
+    String extraContext = '',
+    bool autoGenerateScript = true,
+    bool autoGenerateVoice = false,
+    bool autoSuggestVisuals = false,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/from-idea'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'idea': idea,
+        'niche': niche,
+        'language': language,
+        'tone': tone,
+        'duration_seconds': durationSeconds,
+        'script_depth': scriptDepth,
+        'narrative_style': narrativeStyle,
+        'content_format': contentFormat,
+        'extra_context': extraContext,
+        'auto_generate_script': autoGenerateScript,
+        'auto_generate_voice': autoGenerateVoice,
+        'auto_suggest_visuals': autoSuggestVisuals,
+      }),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> createGenerationProjectFromScript({
+    required String script,
+    required String title,
+    required String niche,
+    required String language,
+    required String tone,
+    required int durationSeconds,
+    bool autoGenerateVoice = false,
+    bool autoSuggestVisuals = true,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/from-script'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'script': script,
+        'title': title,
+        'niche': niche,
+        'language': language,
+        'tone': tone,
+        'duration_seconds': durationSeconds,
+        'auto_generate_voice': autoGenerateVoice,
+        'auto_suggest_visuals': autoSuggestVisuals,
+      }),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationOpportunitySearchResponse> searchGenerationOpportunities({
+    required String niche,
+    required String query,
+    String language = 'pt-BR',
+    String region = 'BR',
+    String timeWindow = 'week',
+    int count = 5,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/opportunities/search'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'niche': niche,
+        'query': query,
+        'language': language,
+        'region': region,
+        'time_window': timeWindow,
+        'count': count,
+      }),
+    );
+    _throwIfBad(response);
+    return GenerationOpportunitySearchResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> createGenerationProjectFromOpportunity({
+    required GenerationOpportunity opportunity,
+    required int durationSeconds,
+    String scriptDepth = 'normal',
+    String narrativeStyle = 'documentary',
+    bool autoGenerateScript = true,
+    bool autoGenerateVoice = false,
+    bool autoSuggestVisuals = false,
+    String extraContext = '',
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/from-opportunity'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'opportunity': opportunity.toJson(),
+        'duration_seconds': durationSeconds,
+        'script_depth': scriptDepth,
+        'narrative_style': narrativeStyle,
+        'auto_generate_script': autoGenerateScript,
+        'auto_generate_voice': autoGenerateVoice,
+        'auto_suggest_visuals': autoSuggestVisuals,
+        'extra_context': extraContext,
+      }),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<GenerationProject>>
+  createGenerationProjectsFromOpportunitiesBatch({
+    required List<GenerationOpportunity> opportunities,
+    required int durationSeconds,
+    String scriptDepth = 'normal',
+    String narrativeStyle = 'documentary',
+    bool autoGenerateScript = true,
+    bool autoGenerateVoice = false,
+    bool autoSuggestVisuals = false,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/from-opportunities-batch'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'opportunities': opportunities.map((item) => item.toJson()).toList(),
+        'duration_seconds': durationSeconds,
+        'script_depth': scriptDepth,
+        'narrative_style': narrativeStyle,
+        'auto_generate_script': autoGenerateScript,
+        'auto_generate_voice': autoGenerateVoice,
+        'auto_suggest_visuals': autoSuggestVisuals,
+        'max_projects': opportunities.length,
+      }),
+    );
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return (payload['projects'] as List<dynamic>? ?? [])
+        .map((item) => GenerationProject.fromJson(item as Map<String, dynamic>))
+        .toList();
   }
 
   Future<GenerationProject> updateGenerationProject({
@@ -329,6 +559,110 @@ class ApiClient {
     final response = await _client.get(_uri('/generation/voices'));
     _throwIfBad(response);
     return GenerationVoicesResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> suggestGenerationVisuals(String projectId) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/visuals/suggest'),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> updateGenerationVisuals({
+    required String projectId,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    final response = await _client.put(
+      _uri('/generation/projects/$projectId/visuals'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'visual_items': items}),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> addGenerationVisual({
+    required String projectId,
+    required Map<String, dynamic> item,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/visuals'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(item),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> deleteGenerationVisual({
+    required String projectId,
+    required String visualId,
+  }) async {
+    final response = await _client.delete(
+      _uri('/generation/projects/$projectId/visuals/$visualId'),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> selectGenerationVisual({
+    required String projectId,
+    required String visualId,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/visuals/$visualId/select'),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> rejectGenerationVisual({
+    required String projectId,
+    required String visualId,
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/visuals/$visualId/reject'),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationProject> markGenerationVisualsReady(String projectId) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/visuals/mark-ready'),
+    );
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationStockSearchResponse> searchGenerationStockMedia({
+    required String query,
+    String orientation = 'portrait',
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/visuals/search-stock'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'query': query, 'orientation': orientation}),
+    );
+    _throwIfBad(response);
+    return GenerationStockSearchResponse.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }
