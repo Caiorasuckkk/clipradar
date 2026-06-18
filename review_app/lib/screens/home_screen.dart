@@ -12,6 +12,8 @@ import '../widgets/df_gradient_card.dart';
 import '../widgets/df_metric_card.dart';
 import '../widgets/df_section_header.dart';
 import '../widgets/df_status_chip.dart';
+import 'generation_auto_screen.dart';
+import 'generation_performance_screen.dart';
 import 'processing_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -265,12 +267,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 accent: AppColors.purple,
                 actions: [
                   DFPrimaryButton(
-                    label: 'Gerar ideia',
-                    icon: Icons.lightbulb_rounded,
-                    onPressed: widget.onOpenGeneration,
+                    label: 'Gerar vídeo automático',
+                    icon: Icons.auto_awesome_rounded,
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const GenerationAutoScreen(),
+                      ),
+                    ),
                   ),
                   DFSecondaryButton(
-                    label: 'Criar roteiro',
+                    label: 'Modo avançado',
                     icon: Icons.edit_note_rounded,
                     onPressed: widget.onOpenGeneration,
                   ),
@@ -278,6 +284,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     label: 'Ver projetos',
                     icon: Icons.folder_copy_rounded,
                     onPressed: widget.onOpenGeneration,
+                  ),
+                  DFSecondaryButton(
+                    label: 'Desempenho',
+                    icon: Icons.query_stats_rounded,
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const GenerationPerformanceScreen(),
+                      ),
+                    ),
                   ),
                 ],
               ),

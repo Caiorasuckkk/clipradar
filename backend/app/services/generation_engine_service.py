@@ -17,6 +17,7 @@ from app.services.generation_llm_provider_service import (
     generate_research_brief as provider_generate_research_brief,
     generate_script_from_research as provider_generate_script_from_research,
     get_provider_status,
+    sanitize_narration_lines,
 )
 from app.services.generation_narrative_quality_service import (
     build_script_from_narrative_plan,
@@ -29,6 +30,7 @@ from app.services.generation_narrative_quality_service import (
     score_narrative_quality,
     script_depth_label,
 )
+from app.services.generation_script_judge_service import evaluate_and_improve
 from app.services.generation_script_quality_service import (
     score_generation_script,
     validate_script_is_narration,
@@ -45,7 +47,7 @@ from app.services.generation_watchability_service import (
 
 
 VALID_MODES = {"local", "canal_dark"}
-VALID_PROVIDERS = {"none", "gemini"}
+VALID_PROVIDERS = {"none", "gemini", "openai"}
 
 CANAL_DARK_FEATURES = [
     "trend_scout_criteria",
@@ -60,7 +62,7 @@ def engine_status() -> dict[str, Any]:
     mode = _engine_mode()
     provider = _provider()
     provider_status = get_provider_status()
-    external_available = provider == "gemini" and bool(provider_status["gemini_available"])
+    external_available = provider in {"gemini", "openai"} and bool(provider_status.get("external_available"))
     return {
         "engine_mode": mode,
         "provider": provider,
@@ -97,7 +99,7 @@ def generate_engine_ideas(
 ) -> list[dict[str, Any]]:
     mode = _engine_mode()
     provider = _provider()
-    if mode == "canal_dark" and provider == "gemini":
+    if mode == "canal_dark" and provider in {"gemini", "openai"}:
         return provider_generate_ideas(
             niche=niche,
             topic=topic,
@@ -135,9 +137,15 @@ def generate_engine_script(
     content_format: str = "manual_topic",
     extra_context: str = "",
     opportunity_data: dict[str, Any] | None = None,
+    scriptwriter: str = "",
 ) -> dict[str, Any]:
     mode = _engine_mode()
-    provider = _provider() if provider_override == "auto" else ("gemini" if provider_override == "gemini" else "none")
+    if provider_override == "auto":
+        provider = _provider()
+    elif provider_override in {"gemini", "openai"}:
+        provider = provider_override
+    else:
+        provider = "none"
     duration = _normalize_duration(duration_seconds, duration_preset)
     depth = normalize_script_depth(script_depth)
     style = normalize_narrative_style(narrative_style, tone=tone)
@@ -171,49 +179,59 @@ def generate_engine_script(
         provider_override=provider_override,
         local_fallback=lambda: local_generate_narrative_plan(factual_brief, duration, depth, style),
     )
-    if mode == "canal_dark" and provider == "gemini":
-        payload = provider_generate_script_from_research(
-            research_brief=factual_brief,
-            narrative_plan=narrative_plan,
-            niche=niche,
-            topic=topic or idea,
-            duration_seconds=duration,
-            tone=tone,
-            language=language,
-            script_depth=depth,
-            narrative_style=style,
-            local_fallback=lambda: _local_script(
-                idea, niche, topic, duration, tone, language, mode, provider, True, factual_brief, narrative_plan, depth, style
-            ),
+    if mode == "canal_dark" and provider in {"gemini", "openai"}:
+        def _build_gemini_script(critique: str = "") -> dict[str, Any]:
+            payload = provider_generate_script_from_research(
+                research_brief=factual_brief,
+                narrative_plan=narrative_plan,
+                niche=niche,
+                topic=topic or idea,
+                duration_seconds=duration,
+                tone=tone,
+                language=language,
+                script_depth=depth,
+                narrative_style=style,
+                local_fallback=lambda: _local_script(
+                    idea, niche, topic, duration, tone, language, mode, provider, True, factual_brief, narrative_plan, depth, style
+                ),
+                provider_override=provider_override,
+                critique=critique,
+                scriptwriter=scriptwriter,
+            )
+            payload.setdefault("factual_brief", factual_brief)
+            payload.setdefault("research_brief", factual_brief)
+            payload.setdefault("fact_check_notes", factual_brief.get("fact_check_notes", []))
+            payload.setdefault("estimated_duration_seconds", duration)
+            payload.setdefault("duration_seconds", duration)
+            payload["requested_duration_seconds"] = duration
+            payload["duration_preset_label"] = _duration_label(duration)
+            payload["force_research_used"] = bool(force_research)
+            _apply_narrative_metadata(payload, narrative_plan, factual_brief, depth, style)
+            payload.setdefault("voice_style", _voice_style(tone))
+            payload.setdefault("pacing", "narrativo, direto e com pausas curtas")
+            payload.setdefault("niche", _clean(niche) or "geral")
+            payload.setdefault("language", language or "pt-BR")
+            payload.setdefault("tone", tone or "curioso")
+            payload.setdefault("status", "script")
+            payload.setdefault("script_repair_applied", False)
+            payload.setdefault("script_repair_reason", "")
+            payload.update(
+                {
+                    "content_format": fmt,
+                    "extra_context": extra_context,
+                    "opportunity_data": opportunity if opportunity_data else {},
+                    "concrete_promise": opportunity.get("concrete_promise", ""),
+                    "viewer_reason_to_watch": opportunity.get("viewer_reason_to_watch", ""),
+                }
+            )
+            return _finalize_script_payload(payload, topic or idea, niche, tone, depth, style)
+
+        payload = _build_gemini_script()
+        return evaluate_and_improve(
+            payload,
+            regenerate=_build_gemini_script,
             provider_override=provider_override,
         )
-        payload.setdefault("factual_brief", factual_brief)
-        payload.setdefault("research_brief", factual_brief)
-        payload.setdefault("fact_check_notes", factual_brief.get("fact_check_notes", []))
-        payload.setdefault("estimated_duration_seconds", duration)
-        payload.setdefault("duration_seconds", duration)
-        payload["requested_duration_seconds"] = duration
-        payload["duration_preset_label"] = _duration_label(duration)
-        payload["force_research_used"] = bool(force_research)
-        _apply_narrative_metadata(payload, narrative_plan, factual_brief, depth, style)
-        payload.setdefault("voice_style", _voice_style(tone))
-        payload.setdefault("pacing", "narrativo, direto e com pausas curtas")
-        payload.setdefault("niche", _clean(niche) or "geral")
-        payload.setdefault("language", language or "pt-BR")
-        payload.setdefault("tone", tone or "curioso")
-        payload.setdefault("status", "script")
-        payload.setdefault("script_repair_applied", False)
-        payload.setdefault("script_repair_reason", "")
-        payload.update(
-            {
-                "content_format": fmt,
-                "extra_context": extra_context,
-                "opportunity_data": opportunity if opportunity_data else {},
-                "concrete_promise": opportunity.get("concrete_promise", ""),
-                "viewer_reason_to_watch": opportunity.get("viewer_reason_to_watch", ""),
-            }
-        )
-        return _finalize_script_payload(payload, topic or idea, niche, tone, depth, style)
     if mode == "canal_dark" and config.GENERATION_REQUIRE_EXTERNAL_AI:
         raise RuntimeError("external_generation_ai_unavailable")
     payload = _local_script(
@@ -482,6 +500,11 @@ def _finalize_script_payload(
             style,
         )
     _apply_narrative_metadata(payload, narrative_plan, factual_brief, depth, style)
+    # A real LLM script (OpenAI/Gemini) carries its own quality; the template
+    # repairs below were built for the no-LLM fallback era and overwrite good,
+    # simple narration with dense summary text. Skip them for LLM scripts and
+    # let the prompt + LLM judge/rewrite loop handle quality instead.
+    is_llm = payload.get("provider") in {"openai", "gemini"} and not payload.get("fallback_used")
     validation = validate_script_is_narration(payload.get("script_lines"))
     if not validation["is_narration_ready"]:
         repaired = repair_meta_script_to_narration(
@@ -499,7 +522,7 @@ def _finalize_script_payload(
         factual_brief=factual_brief,
         topic=idea,
     )
-    if not specificity["is_specific"] and factual_brief.get("confidence") != "low":
+    if not specificity["is_specific"] and factual_brief.get("confidence") != "low" and not is_llm:
         repaired = repair_generic_script_with_brief(
             factual_brief=factual_brief,
             tone=tone,
@@ -521,6 +544,7 @@ def _finalize_script_payload(
     requested_duration = _normalize_duration(payload.get("requested_duration_seconds"))
     if (
         factual_brief.get("confidence") != "low"
+        and not is_llm
         and float(payload.get("estimated_duration_seconds") or 0) < requested_duration * 0.65
     ):
         repaired = repair_generic_script_with_brief(
@@ -541,7 +565,7 @@ def _finalize_script_payload(
         negatives += specificity["negative_signals"]
         _add_duration_metadata(payload)
     narrative_quality = score_narrative_quality(payload)
-    if narrative_quality["shallow_script_detected"] and factual_brief.get("confidence") != "low":
+    if narrative_quality["shallow_script_detected"] and factual_brief.get("confidence") != "low" and not is_llm:
         repaired = repair_shallow_script_with_narrative_plan(
             script=payload,
             research_brief=factual_brief,
@@ -584,6 +608,7 @@ def _finalize_script_payload(
     if (
         watchability["content_format"] in {"player_watchlist", "match_preview"}
         and watchability["watchability_score"] < 6.0
+        and not is_llm
     ):
         payload = repair_generic_opportunity_script(
             payload,
@@ -608,6 +633,12 @@ def _finalize_script_payload(
                 ]
             )
         )
+    # Final safety net: flatten any object/dict that a repair step left inside
+    # script_lines (e.g. {factual, interpretation} from the narrative plan) and
+    # drop a closing line that just duplicates the CTA.
+    payload["script_lines"] = sanitize_narration_lines(
+        payload.get("script_lines"), payload.get("cta")
+    )
     return payload
 
 

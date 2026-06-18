@@ -7,6 +7,7 @@ import '../models/review_summary.dart';
 import '../models/final_clip.dart';
 import '../models/final_summary.dart';
 import '../models/generation_project.dart';
+import '../models/generation_render.dart';
 import '../models/job_run.dart';
 import '../models/ops_status.dart';
 import '../models/candidate_clip.dart';
@@ -36,6 +37,10 @@ class ApiClient {
       '$baseUrl/posting_package/latest/videos/$filename';
   String generationVoiceAudioUrl(String projectId) =>
       '$baseUrl/generation/projects/$projectId/voice/audio';
+  String generationRenderVideoUrl(String projectId) =>
+      '$baseUrl/generation/projects/$projectId/render/video';
+  String generationRenderThumbnailUrl(String projectId) =>
+      '$baseUrl/generation/projects/$projectId/render/thumbnail';
 
   Future<List<ReviewClip>> fetchClips({String status = 'all'}) async {
     final response = await _client.get(
@@ -523,6 +528,16 @@ class ApiClient {
         .toList();
   }
 
+  Future<GenerationProject> fetchGenerationProject(String projectId) async {
+    final response = await _client
+        .get(_uri('/generation/projects/$projectId'))
+        .timeout(const Duration(seconds: 15));
+    _throwIfBad(response);
+    return GenerationProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<GenerationProject> updateGenerationProject({
     required String projectId,
     required Map<String, dynamic> payload,
@@ -693,6 +708,218 @@ class ApiClient {
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     return GenerationProject.fromJson(
       payload['project'] as Map<String, dynamic>,
+    );
+  }
+
+  /// Ensure render prerequisites (words.json, downloaded visuals, status)
+  /// without rendering. Downloads Pexels b-roll; enables a visible fallback
+  /// only when [allowVisualFallback] is set.
+  Future<GenerationRenderPrepare> prepareGenerationRender(
+    String projectId, {
+    bool markVisualReady = false,
+    bool allowVisualFallback = false,
+  }) async {
+    final response = await _client
+        .post(
+          _uri('/generation/projects/$projectId/render/prepare'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'mark_visual_ready': markVisualReady,
+            'allow_visual_fallback': allowVisualFallback,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+    _throwIfBad(response);
+    return GenerationRenderPrepare.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  /// Enqueue a background render job. Returns the created job handle.
+  Future<GenerationJob> startGenerationRender(
+    String projectId, {
+    bool allowVisualFallback = false,
+    bool force = false,
+  }) async {
+    final response = await _client
+        .post(
+          _uri('/generation/projects/$projectId/render'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'overwrite': true,
+            'allow_visual_fallback': allowVisualFallback,
+            'force': force,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return GenerationJob.fromJson(payload['job'] as Map<String, dynamic>);
+  }
+
+  /// Poll render status (project render fields + latest job). Short timeout so
+  /// a slow backend never hangs the polling UI.
+  Future<GenerationRenderStatus> fetchGenerationRenderStatus(
+    String projectId,
+  ) async {
+    final response = await _client
+        .get(_uri('/generation/projects/$projectId/render/status'))
+        .timeout(const Duration(seconds: 15));
+    _throwIfBad(response);
+    return GenerationRenderStatus.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationPerformance> fetchGenerationPerformance({bool refresh = false}) async {
+    final response = await _client
+        .get(_uri('/generation/performance', {if (refresh) 'refresh': 'true'}))
+        .timeout(const Duration(seconds: 60));
+    _throwIfBad(response);
+    return GenerationPerformance.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> markGenerationProjectPosted({
+    required String projectId,
+    required String platform,
+    required String url,
+    int? views,
+    double? retention,
+    double? ctr,
+    String notes = '',
+  }) async {
+    final response = await _client.post(
+      _uri('/generation/projects/$projectId/posted'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'platform': platform,
+        'url': url,
+        'views': views,
+        'retention': retention,
+        'ctr': ctr,
+        'notes': notes,
+      }),
+    );
+    _throwIfBad(response);
+  }
+
+  Future<List<GenerationPersona>> fetchGenerationPersonas() async {
+    final response = await _client
+        .get(_uri('/generation/personas'))
+        .timeout(const Duration(seconds: 15));
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return (payload['personas'] as List<dynamic>? ?? [])
+        .map((item) => GenerationPersona.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// One-shot auto generation: theme (+ studio/persona) -> full video.
+  Future<GenerationAutoStart> startAutoGeneration({
+    required String theme,
+    String persona = '',
+    String language = 'pt-BR',
+    String speed = 'normal',
+    String voice = '',
+  }) async {
+    final response = await _client
+        .post(
+          _uri('/generation/auto'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'theme': theme,
+            'persona': persona,
+            'language': language,
+            'speed': speed,
+            'voice': voice,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    _throwIfBad(response);
+    return GenerationAutoStart.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  /// Top trending história/curiosidades topics (YouTube/TikTok) to seed themes.
+  Future<List<GenerationTrend>> fetchTrendingTopics({
+    String language = 'pt-BR',
+    int limit = 10,
+    bool refresh = false,
+  }) async {
+    final response = await _client
+        .get(_uri('/generation/trends', {
+          'language': language,
+          'limit': '$limit',
+          'refresh': refresh ? 'true' : 'false',
+        }))
+        .timeout(const Duration(seconds: 45));
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return (payload['topics'] as List<dynamic>? ?? [])
+        .map((item) => GenerationTrend.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// One theme -> one auto video per language (e.g. pt-BR + en-US for 2 channels).
+  Future<List<GenerationAutoStartItem>> startAutoGenerationBatch({
+    required String theme,
+    String persona = '',
+    String speed = 'normal',
+    String voice = '',
+    List<String> languages = const ['pt-BR', 'en-US'],
+  }) async {
+    final response = await _client
+        .post(
+          _uri('/generation/auto/batch'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'theme': theme,
+            'persona': persona,
+            'speed': speed,
+            'voice': voice,
+            'languages': languages,
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+    _throwIfBad(response);
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return (payload['items'] as List<dynamic>? ?? [])
+        .map((item) =>
+            GenerationAutoStartItem.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Unified auto-generation status (script -> visuals -> voice -> render).
+  Future<GenerationAutoStatus> fetchAutoStatus(String projectId) async {
+    final response = await _client
+        .get(_uri('/generation/projects/$projectId/auto/status'))
+        .timeout(const Duration(seconds: 15));
+    _throwIfBad(response);
+    return GenerationAutoStatus.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationJob> cancelGenerationJob(String jobId) async {
+    final response = await _client
+        .post(_uri('/generation/jobs/$jobId/cancel'))
+        .timeout(const Duration(seconds: 15));
+    _throwIfBad(response);
+    return GenerationJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GenerationJob> retryGenerationJob(String jobId) async {
+    final response = await _client
+        .post(_uri('/generation/jobs/$jobId/retry'))
+        .timeout(const Duration(seconds: 15));
+    _throwIfBad(response);
+    return GenerationJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
     );
   }
 
@@ -945,6 +1172,245 @@ class ApprovedGenerationStatus {
       failedCount: _intValue(json['failed_count']),
       lastRunId: json['last_run_id']?.toString() ?? '',
       latestError: json['latest_error']?.toString() ?? '',
+    );
+  }
+}
+
+class GenerationPerformance {
+  const GenerationPerformance({
+    required this.videos,
+    required this.totalPosted,
+    required this.byStudio,
+    required this.byNiche,
+  });
+
+  final List<GenerationPerfVideo> videos;
+  final int totalPosted;
+  final List<GenerationPerfGroup> byStudio;
+  final List<GenerationPerfGroup> byNiche;
+
+  factory GenerationPerformance.fromJson(Map<String, dynamic> json) {
+    List<T> parse<T>(String key, T Function(Map<String, dynamic>) fn) =>
+        (json[key] as List<dynamic>? ?? [])
+            .map((e) => fn(e as Map<String, dynamic>))
+            .toList();
+    return GenerationPerformance(
+      videos: parse('videos', GenerationPerfVideo.fromJson),
+      totalPosted: _intValue(json['total_posted']),
+      byStudio: parse('by_studio', GenerationPerfGroup.fromJson),
+      byNiche: parse('by_niche', GenerationPerfGroup.fromJson),
+    );
+  }
+}
+
+class GenerationPerfVideo {
+  const GenerationPerfVideo({
+    required this.projectId,
+    required this.title,
+    required this.personaLabel,
+    required this.niche,
+    required this.platform,
+    required this.url,
+    required this.views,
+    required this.likes,
+    required this.retention,
+    required this.ctr,
+  });
+
+  final String projectId;
+  final String title;
+  final String personaLabel;
+  final String niche;
+  final String platform;
+  final String url;
+  final int views;
+  final int likes;
+  final double retention;
+  final double ctr;
+
+  factory GenerationPerfVideo.fromJson(Map<String, dynamic> json) {
+    double d(Object? v) => v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0.0;
+    return GenerationPerfVideo(
+      projectId: json['project_id']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      personaLabel: json['persona_label']?.toString() ?? '—',
+      niche: json['niche']?.toString() ?? '—',
+      platform: json['platform']?.toString() ?? '',
+      url: json['url']?.toString() ?? '',
+      views: _intValue(json['views']),
+      likes: _intValue(json['likes']),
+      retention: d(json['retention']),
+      ctr: d(json['ctr']),
+    );
+  }
+}
+
+class GenerationPerfGroup {
+  const GenerationPerfGroup({
+    required this.name,
+    required this.count,
+    required this.avgViews,
+    required this.totalViews,
+  });
+
+  final String name;
+  final int count;
+  final double avgViews;
+  final int totalViews;
+
+  factory GenerationPerfGroup.fromJson(Map<String, dynamic> json) {
+    return GenerationPerfGroup(
+      name: json['name']?.toString() ?? '—',
+      count: _intValue(json['count']),
+      avgViews: json['avg_views'] is num
+          ? (json['avg_views'] as num).toDouble()
+          : double.tryParse(json['avg_views']?.toString() ?? '') ?? 0.0,
+      totalViews: _intValue(json['total_views']),
+    );
+  }
+}
+
+class GenerationPersona {
+  const GenerationPersona({
+    required this.id,
+    required this.label,
+    required this.description,
+    required this.icon,
+    required this.accent,
+    required this.voice,
+  });
+
+  final String id;
+  final String label;
+  final String description;
+  final String icon;
+  final String accent;
+  final String voice;
+
+  factory GenerationPersona.fromJson(Map<String, dynamic> json) {
+    return GenerationPersona(
+      id: json['id']?.toString() ?? '',
+      label: json['label']?.toString() ?? '',
+      description: json['description']?.toString() ?? '',
+      icon: json['icon']?.toString() ?? '',
+      accent: json['accent']?.toString() ?? '',
+      voice: json['voice']?.toString() ?? '',
+    );
+  }
+}
+
+class GenerationAutoStart {
+  const GenerationAutoStart({
+    required this.projectId,
+    required this.jobId,
+    required this.autoStatus,
+  });
+
+  final String projectId;
+  final String jobId;
+  final String autoStatus;
+
+  factory GenerationAutoStart.fromJson(Map<String, dynamic> json) {
+    return GenerationAutoStart(
+      projectId: json['project_id']?.toString() ?? '',
+      jobId: json['job_id']?.toString() ?? '',
+      autoStatus: json['auto_status']?.toString() ?? '',
+    );
+  }
+}
+
+/// One language's result inside a batch auto-generation (theme -> N videos).
+class GenerationAutoStartItem {
+  const GenerationAutoStartItem({
+    required this.language,
+    required this.projectId,
+    required this.jobId,
+    required this.error,
+  });
+
+  final String language;
+  final String projectId;
+  final String jobId;
+  final String error;
+
+  bool get ok => projectId.isNotEmpty && error.isEmpty;
+
+  factory GenerationAutoStartItem.fromJson(Map<String, dynamic> json) {
+    return GenerationAutoStartItem(
+      language: json['language']?.toString() ?? '',
+      projectId: json['project_id']?.toString() ?? '',
+      jobId: json['job_id']?.toString() ?? '',
+      error: json['error']?.toString() ?? '',
+    );
+  }
+}
+
+/// A suggested trending topic to seed the theme field.
+class GenerationTrend {
+  const GenerationTrend({
+    required this.title,
+    required this.hook,
+    required this.why,
+  });
+
+  final String title;
+  final String hook;
+  final String why;
+
+  factory GenerationTrend.fromJson(Map<String, dynamic> json) {
+    return GenerationTrend(
+      title: json['title']?.toString() ?? '',
+      hook: json['hook']?.toString() ?? '',
+      why: json['why']?.toString() ?? '',
+    );
+  }
+}
+
+class GenerationAutoStatus {
+  const GenerationAutoStatus({
+    required this.projectId,
+    required this.status,
+    required this.progress,
+    required this.title,
+    required this.degraded,
+    required this.warning,
+    required this.videoUrl,
+    required this.error,
+    required this.scriptQualityScore,
+    required this.scriptQualityTier,
+  });
+
+  final String projectId;
+  final String status; // queued|scripting|visuals|voice|rendering|ready|failed|cancelled
+  final double progress;
+  final String title;
+  final bool degraded;
+  final String warning;
+  final String videoUrl;
+  final String error;
+  final double? scriptQualityScore;
+  final String scriptQualityTier;
+
+  bool get isTerminal =>
+      status == 'ready' || status == 'failed' || status == 'cancelled';
+
+  factory GenerationAutoStatus.fromJson(Map<String, dynamic> json) {
+    final score = json['script_quality_score'];
+    return GenerationAutoStatus(
+      projectId: json['project_id']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'queued',
+      progress: json['progress'] is num
+          ? (json['progress'] as num).toDouble()
+          : double.tryParse(json['progress']?.toString() ?? '') ?? 0.0,
+      title: json['title']?.toString() ?? '',
+      degraded: json['degraded'] == true,
+      warning: json['warning']?.toString() ?? '',
+      videoUrl: json['video_url']?.toString() ?? '',
+      error: json['error']?.toString() ?? '',
+      scriptQualityScore: score is num
+          ? score.toDouble()
+          : double.tryParse(score?.toString() ?? ''),
+      scriptQualityTier: json['script_quality_tier']?.toString() ?? '',
     );
   }
 }

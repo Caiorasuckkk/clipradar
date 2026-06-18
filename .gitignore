@@ -36,3 +36,6 @@ backend/app/storage/clips/*
 backend/app/storage/clips/*.json
 backend/app/storage/vertical_exports/*
 backend/app/storage/videos/*
+backend/app/storage/darkflow.db
+backend/app/storage/darkflow.db-wal
+backend/app/storage/darkflow.db-shm

@@ -57,9 +57,34 @@ WHISPER_FORCE_PT_CHANNELS = (
     os.getenv("WHISPER_FORCE_PT_CHANNELS", "true").lower() == "true"
 )
 MAX_VIDEOS_PER_RUN = int(os.getenv("MAX_VIDEOS_PER_RUN", "5"))
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 GENERATION_ENGINE = os.getenv("GENERATION_ENGINE", "local").strip().lower()
 GENERATION_AI_PROVIDER = os.getenv("GENERATION_AI_PROVIDER", "none").strip().lower()
+# OpenAI provider (alternative to Gemini). Smart split: strong model on
+# research/script/judge, cheap model on trivial steps. Web search replaces
+# Gemini grounding for current facts. All model ids are env-overridable so a
+# wrong default can be fixed without code changes.
+GENERATION_OPENAI_RESEARCH_MODEL = os.getenv("GENERATION_OPENAI_RESEARCH_MODEL", "gpt-5.4").strip()
+GENERATION_OPENAI_SCRIPT_MODEL = os.getenv("GENERATION_OPENAI_SCRIPT_MODEL", "gpt-5.4").strip()
+GENERATION_OPENAI_CHEAP_MODEL = os.getenv("GENERATION_OPENAI_CHEAP_MODEL", "gpt-5.4-mini").strip()
+# Judge is evaluative (not writing) — defaults to the cheap model to save tokens.
+GENERATION_OPENAI_JUDGE_MODEL = os.getenv(
+    "GENERATION_OPENAI_JUDGE_MODEL", GENERATION_OPENAI_CHEAP_MODEL
+).strip()
+GENERATION_OPENAI_USE_WEB_SEARCH = (
+    os.getenv("GENERATION_OPENAI_USE_WEB_SEARCH", "true").lower() == "true"
+)
+# AI image generation as a LAST-RESORT visual (only when stock + Wikimedia have
+# nothing). Priced per image, so use the cheap model at low quality and cap how
+# many per video to control cost. Covers gaps stock can't: modern people,
+# current athletes, anime (style), etc.
+GENERATION_ENABLE_AI_IMAGE_FALLBACK = (
+    os.getenv("GENERATION_ENABLE_AI_IMAGE_FALLBACK", "true").lower() == "true"
+)
+GENERATION_OPENAI_IMAGE_MODEL = os.getenv("GENERATION_OPENAI_IMAGE_MODEL", "gpt-image-1-mini").strip()
+GENERATION_IMAGE_QUALITY = os.getenv("GENERATION_IMAGE_QUALITY", "low").strip().lower()
+GENERATION_IMAGE_SIZE = os.getenv("GENERATION_IMAGE_SIZE", "1024x1536").strip()
+GENERATION_MAX_AI_IMAGES_PER_VIDEO = int(os.getenv("GENERATION_MAX_AI_IMAGES_PER_VIDEO", "20"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GENERATION_REQUIRE_EXTERNAL_AI = (
     os.getenv("GENERATION_REQUIRE_EXTERNAL_AI", "false").lower() == "true"
@@ -70,6 +95,8 @@ GENERATION_USE_WEB_GROUNDING = (
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
 GEMINI_RESEARCH_MODEL = os.getenv("GEMINI_RESEARCH_MODEL", GEMINI_MODEL).strip()
 GEMINI_SCRIPT_MODEL = os.getenv("GEMINI_SCRIPT_MODEL", GEMINI_MODEL).strip()
+# Judge defaults to the cheap/lite model (evaluation doesn't need the strong one).
+GEMINI_JUDGE_MODEL = os.getenv("GEMINI_JUDGE_MODEL", GEMINI_MODEL).strip()
 GENERATION_GEMINI_MODEL = os.getenv("GENERATION_GEMINI_MODEL", GEMINI_MODEL).strip()
 GENERATION_MAX_RESEARCH_CALLS_PER_PROJECT = int(
     os.getenv("GENERATION_MAX_RESEARCH_CALLS_PER_PROJECT", "3")
@@ -80,12 +107,74 @@ GENERATION_MAX_SCRIPT_CALLS_PER_PROJECT = int(
 GENERATION_RESEARCH_CACHE_TTL_DAYS = int(
     os.getenv("GENERATION_RESEARCH_CACHE_TTL_DAYS", "7")
 )
+# LLM-as-judge for script quality (Fase 2). One cheap flash call scores the
+# script; if it is weak the script is rewritten with the critique. The regex
+# scorer becomes advisory-only when the judge runs.
+GENERATION_ENABLE_LLM_JUDGE = (
+    os.getenv("GENERATION_ENABLE_LLM_JUDGE", "true").lower() == "true"
+)
+GENERATION_JUDGE_REWRITE_THRESHOLD = float(
+    os.getenv("GENERATION_JUDGE_REWRITE_THRESHOLD", "7.5")
+)
+GENERATION_MAX_SCRIPT_REWRITES = int(
+    os.getenv("GENERATION_MAX_SCRIPT_REWRITES", "3")
+)
+# Hard quality gate: the auto pipeline refuses to build a video from a script
+# scored below this by the judge (only enforced when the judge actually ran).
+GENERATION_MIN_ACCEPT_SCORE = float(os.getenv("GENERATION_MIN_ACCEPT_SCORE", "7.5"))
+# LLM-driven visual queries (Fase: visual matching). One batched flash call turns
+# each script beat into generic English stock-search queries that visually match
+# the narration. Falls back to the hardcoded dictionary when disabled/unavailable.
+GENERATION_ENABLE_LLM_VISUAL_QUERIES = (
+    os.getenv("GENERATION_ENABLE_LLM_VISUAL_QUERIES", "true").lower() == "true"
+)
+GENERATION_MAX_VISUAL_QUERIES_PER_ITEM = int(
+    os.getenv("GENERATION_MAX_VISUAL_QUERIES_PER_ITEM", "3")
+)
+# Visual density: aim for a new image roughly every N seconds (more cuts = more
+# dynamic). A 60s video at 4s/visual gets ~15 images. Capped by MAX_VISUALS.
+GENERATION_SECONDS_PER_VISUAL = float(os.getenv("GENERATION_SECONDS_PER_VISUAL", "4"))
+GENERATION_MAX_VISUALS = int(os.getenv("GENERATION_MAX_VISUALS", "24"))
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "").strip()
+# Premium TTS providers (more realistic narration than edge-tts).
+# OpenAI TTS uses the existing OPENAI_API_KEY (enable the model in Allowed models).
+GENERATION_OPENAI_TTS_MODEL = os.getenv("GENERATION_OPENAI_TTS_MODEL", "tts-1-hd").strip()
+# Caption sync: OpenAI TTS returns no word timings, so we transcribe the generated
+# audio with Whisper (word-level timestamps) to lock subtitles to the real speech.
+# ~US$0.006/min of audio. whisper-1 is the model that supports word granularities.
+GENERATION_ALIGN_CAPTIONS = (
+    os.getenv("GENERATION_ALIGN_CAPTIONS", "true").lower() == "true"
+)
+GENERATION_OPENAI_TRANSCRIBE_MODEL = os.getenv(
+    "GENERATION_OPENAI_TRANSCRIBE_MODEL", "whisper-1"
+).strip()
+# ElevenLabs (most human). Add the key to enable; multilingual model handles pt-BR.
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
+GENERATION_ELEVENLABS_MODEL = os.getenv("GENERATION_ELEVENLABS_MODEL", "eleven_multilingual_v2").strip()
 GENERATION_VISUAL_PROVIDER = os.getenv("GENERATION_VISUAL_PROVIDER", "local").strip().lower()
 GENERATION_ENABLE_STOCK_SEARCH = (
     os.getenv("GENERATION_ENABLE_STOCK_SEARCH", "false").lower() == "true"
 )
 GENERATION_MAX_STOCK_RESULTS = int(os.getenv("GENERATION_MAX_STOCK_RESULTS", "8"))
+# Wikimedia Commons as an extra media source (free, no API key) — strong for
+# history, real people, places and events that stock libraries lack.
+GENERATION_ENABLE_WIKIMEDIA = (
+    os.getenv("GENERATION_ENABLE_WIKIMEDIA", "true").lower() == "true"
+)
+GENERATION_WIKIMEDIA_MAX_RESULTS = int(os.getenv("GENERATION_WIKIMEDIA_MAX_RESULTS", "6"))
+# Extra media sources. Pixabay = more generic stock (photo+video, free key, no
+# attribution). Openverse = millions of CC images (no key, some need credit).
+# Met Museum = public-domain art/artifacts (no key) — great for history.
+PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "").strip()
+GENERATION_ENABLE_PIXABAY = (
+    os.getenv("GENERATION_ENABLE_PIXABAY", "true").lower() == "true"
+)
+GENERATION_ENABLE_OPENVERSE = (
+    os.getenv("GENERATION_ENABLE_OPENVERSE", "true").lower() == "true"
+)
+GENERATION_ENABLE_MET = (
+    os.getenv("GENERATION_ENABLE_MET", "true").lower() == "true"
+)
 MIN_CLIP_SECONDS = int(os.getenv("MIN_CLIP_SECONDS", "60"))
 MAX_CLIP_SECONDS = int(os.getenv("MAX_CLIP_SECONDS", "150"))
 CLIP_END_EXTENSION_SECONDS = int(os.getenv("CLIP_END_EXTENSION_SECONDS", "15"))
@@ -135,7 +224,54 @@ STORAGE_CANDIDATE_REVIEWS_DIR = Path(__file__).resolve().parent / "storage" / "c
 STORAGE_JOB_RUNS_DIR = Path(__file__).resolve().parent / "storage" / "job_runs"
 STORAGE_GENERATION_STATE_DIR = Path(__file__).resolve().parent / "storage" / "generation_state"
 STORAGE_GENERATION_DIR = Path(__file__).resolve().parent / "storage" / "generation"
+STORAGE_GENERATION_RENDERS_DIR = Path(__file__).resolve().parent / "storage" / "generation" / "renders"
+STORAGE_GENERATION_ASSETS_DIR = Path(__file__).resolve().parent / "storage" / "generation" / "assets"
+STORAGE_GENERATION_AUDIO_DIR = Path(__file__).resolve().parent / "storage" / "generation" / "audio"
+# Drop royalty-free .mp3/.m4a/.wav tracks here to enable background music.
+STORAGE_GENERATION_MUSIC_DIR = Path(__file__).resolve().parent / "storage" / "generation" / "music"
 STORAGE_REFERENCE_DIR = Path(__file__).resolve().parent / "storage" / "reference"
+
+# SQLite-backed job queue (Bloco A foundation). State/index lives in SQLite,
+# heavy media stays on disk under storage/generation/*.
+STORAGE_DB_PATH = Path(__file__).resolve().parent / "storage" / "darkflow.db"
+
+# Generation render pipeline (Bloco B)
+GENERATION_RENDER_WIDTH = int(os.getenv("GENERATION_RENDER_WIDTH", "1080"))
+GENERATION_RENDER_HEIGHT = int(os.getenv("GENERATION_RENDER_HEIGHT", "1920"))
+GENERATION_RENDER_FPS = int(os.getenv("GENERATION_RENDER_FPS", "30"))
+GENERATION_RENDER_MAX_SECONDS = int(os.getenv("GENERATION_RENDER_MAX_SECONDS", "90"))
+GENERATION_RENDER_TIMEOUT_SECONDS = int(os.getenv("GENERATION_RENDER_TIMEOUT_SECONDS", "1200"))
+GENERATION_JOB_MAX_ATTEMPTS = int(os.getenv("GENERATION_JOB_MAX_ATTEMPTS", "2"))
+
+# Render quality (0.5.53): narration polishing, captions, smarter visual search
+GENERATION_DEFAULT_NARRATION_STYLE = os.getenv(
+    "GENERATION_DEFAULT_NARRATION_STYLE", "conversational_story"
+).strip()
+GENERATION_DEFAULT_VOICE_RATE = os.getenv("GENERATION_DEFAULT_VOICE_RATE", "-6%").strip()
+GENERATION_CAPTION_MIN_WORDS = int(os.getenv("GENERATION_CAPTION_MIN_WORDS", "3"))
+GENERATION_CAPTION_MAX_WORDS = int(os.getenv("GENERATION_CAPTION_MAX_WORDS", "6"))
+GENERATION_RENDER_DEBUG = os.getenv("GENERATION_RENDER_DEBUG", "true").lower() == "true"
+
+# Viral caption styling (burned-in ASS subtitles).
+GENERATION_CAPTION_FONT = os.getenv("GENERATION_CAPTION_FONT", "Arial").strip()
+GENERATION_CAPTION_FONTSIZE = int(os.getenv("GENERATION_CAPTION_FONTSIZE", "92"))
+GENERATION_CAPTION_UPPERCASE = (
+    os.getenv("GENERATION_CAPTION_UPPERCASE", "true").lower() == "true"
+)
+
+# Background music: mixed low under the narration. Drop tracks in the music dir.
+GENERATION_ENABLE_BG_MUSIC = (
+    os.getenv("GENERATION_ENABLE_BG_MUSIC", "true").lower() == "true"
+)
+GENERATION_BG_MUSIC_VOLUME = float(os.getenv("GENERATION_BG_MUSIC_VOLUME", "0.06"))
+
+# Ken Burns: slow zoom on still images so the video looks edited (not a slideshow).
+# Videos/b-roll already move and are left untouched. Zoom amount is the fraction of
+# extra zoom across a clip (0.12 = up to +12%). Direction alternates per scene.
+GENERATION_ENABLE_KEN_BURNS = (
+    os.getenv("GENERATION_ENABLE_KEN_BURNS", "true").lower() == "true"
+)
+GENERATION_KENBURNS_ZOOM = float(os.getenv("GENERATION_KENBURNS_ZOOM", "0.12"))
 
 DEFAULT_BR_FEEDS = [
     "https://g1.globo.com/rss/g1/",

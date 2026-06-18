@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 from app import config
 from app.services.candidate_review_service import filter_candidate_clips, load_candidate_queue
+from app.services.log_sanitizer import sanitize
 
 
 ParamType = Literal["bool", "int", "float", "str"]
@@ -384,7 +385,7 @@ class LocalJobRunnerService:
         run = self._load_run(run_id)
         if not run:
             return None
-        stdout = _tail(_read_text(Path(str(run.get("full_stdout_path") or ""))))
+        stdout = sanitize(_tail(_read_text(Path(str(run.get("full_stdout_path") or "")))))
         partial = _partial_status_from_stdout(stdout)
         return {
             "run_id": run_id,
@@ -403,7 +404,7 @@ class LocalJobRunnerService:
             "next_action": run.get("next_action"),
             **partial,
             "stdout_tail": stdout,
-            "stderr_tail": _tail(_read_text(Path(str(run.get("full_stderr_path") or "")))),
+            "stderr_tail": sanitize(_tail(_read_text(Path(str(run.get("full_stderr_path") or ""))))),
         }
 
     def cancel_run(self, run_id: str) -> dict[str, Any] | None:
@@ -481,12 +482,12 @@ class LocalJobRunnerService:
             stderr_path.write_text("job_timeout_after_7200_seconds", encoding="utf-8")
             exit_code = -1
         except Exception as exc:
-            stderr_path.write_text(str(exc), encoding="utf-8")
+            stderr_path.write_text(sanitize(str(exc)), encoding="utf-8")
             exit_code = -1
 
         finished_at = datetime.utcnow().isoformat()
-        stdout = _read_text(stdout_path)
-        stderr = _read_text(stderr_path)
+        stdout = sanitize(_read_text(stdout_path))
+        stderr = sanitize(_read_text(stderr_path))
         run = self._load_run(run_id) or run
         if run.get("status") == "cancelled":
             run.update(

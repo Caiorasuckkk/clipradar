@@ -4,13 +4,15 @@ import re
 import uuid
 from typing import Any
 
+from app import config
+from app.services.generation_visual_query_service import build_llm_visual_plan
 from app.services.generation_workspace_service import get_project, update_project
 
 
 VISUAL_TYPES = {"broll", "image", "text_card", "screenshot", "placeholder"}
-VISUAL_SOURCES = {"local", "pexels", "generated", "manual", "placeholder"}
-LICENSE_LANES = {"safe", "review", "restricted", "unknown"}
-VISUAL_STATUSES = {"suggestion", "selected", "missing", "ready", "rejected"}
+VISUAL_SOURCES = {"local", "pexels", "wikimedia", "pixabay", "openverse", "met", "generated", "manual", "placeholder"}
+LICENSE_LANES = {"safe", "pexels", "wikimedia", "pixabay", "openverse", "public_domain", "review", "restricted", "unknown"}
+VISUAL_STATUSES = {"suggestion", "selected", "missing", "needs_asset", "downloaded", "ready", "rejected"}
 
 
 def suggest_visuals_for_project(project_id: str) -> dict[str, Any] | None:
@@ -25,65 +27,101 @@ def suggest_visuals_from_script(project: dict[str, Any]) -> list[dict[str, Any]]
     beats = [item for item in project.get("story_beats") or [] if isinstance(item, dict)]
     visual_context = _string_list(project.get("visual_context"))
     duration = _duration(project)
-    seed_items: list[dict[str, Any]] = []
 
-    for index, beat in enumerate(beats, start=1):
-        line_index = min(index - 1, max(0, len(lines) - 1)) if lines else index - 1
-        line = lines[line_index] if 0 <= line_index < len(lines) else str(beat.get("content") or "")
-        seed_items.append(
-            _visual_item(
-                order=index,
-                script_line_index=line_index,
-                story_beat_id=str(beat.get("beat_id") or f"beat_{index}"),
-                beat_role=str(beat.get("role") or ""),
-                script_line=line,
-                context=str(beat.get("content") or ""),
-                project=project,
-            )
-        )
-
-    if not seed_items:
+    # Build a flat spec list first: (line, context, beat_role, story_beat_id, line_index).
+    specs: list[tuple[str, str, str, str, int]] = []
+    if beats:
+        for index, beat in enumerate(beats, start=1):
+            line_index = min(index - 1, max(0, len(lines) - 1)) if lines else index - 1
+            line = lines[line_index] if 0 <= line_index < len(lines) else str(beat.get("content") or "")
+            specs.append((line, str(beat.get("content") or ""), str(beat.get("role") or ""),
+                          str(beat.get("beat_id") or f"beat_{index}"), line_index))
+    elif lines:
         for index, line in enumerate(lines[:10], start=1):
-            seed_items.append(
-                _visual_item(
-                    order=index,
-                    script_line_index=index - 1,
-                    story_beat_id="",
-                    beat_role=_role_for_order(index),
-                    script_line=line,
-                    context=visual_context[(index - 1) % len(visual_context)] if visual_context else "",
-                    project=project,
-                )
-            )
-
-    if not seed_items:
+            ctx = visual_context[(index - 1) % len(visual_context)] if visual_context else ""
+            specs.append((line, ctx, _role_for_order(index), "", index - 1))
+    elif visual_context:
         for index, context in enumerate(visual_context[:6], start=1):
-            seed_items.append(
-                _visual_item(
-                    order=index,
-                    script_line_index=index - 1,
-                    story_beat_id="",
-                    beat_role=_role_for_order(index),
-                    script_line=context,
-                    context=context,
-                    project=project,
-                )
-            )
+            specs.append((context, context, _role_for_order(index), "", index - 1))
+    else:
+        specs.append((str(project.get("title") or project.get("idea") or "tema principal"),
+                      str(project.get("niche") or ""), "hook", "", 0))
 
-    if not seed_items:
+    # One batched LLM call maps each beat to generic English stock queries.
+    plan = build_llm_visual_plan(project, [spec[0] for spec in specs], [spec[1] for spec in specs])
+
+    seed_items: list[dict[str, Any]] = []
+    for order, (line, context, beat_role, story_beat_id, line_index) in enumerate(specs, start=1):
+        entry = plan[order - 1] if plan and order - 1 < len(plan) and isinstance(plan[order - 1], dict) else None
         seed_items.append(
             _visual_item(
-                order=1,
-                script_line_index=0,
-                story_beat_id="",
-                beat_role="hook",
-                script_line=str(project.get("title") or project.get("idea") or "tema principal"),
-                context=str(project.get("niche") or ""),
+                order=order,
+                script_line_index=line_index,
+                story_beat_id=story_beat_id,
+                beat_role=beat_role,
+                script_line=line,
+                context=context,
                 project=project,
+                llm_entry=entry,
             )
         )
 
-    return _apply_timeline(seed_items, duration)
+    # Biography safety net: for a "quem foi X / vida de X" video, make the generic
+    # scenes show the PERSON (real free photos) instead of a generic stand-in
+    # (e.g. "kid playing soccer" for young Messi).
+    person = _main_person(project)
+    if person:
+        for item in seed_items:
+            if item.get("scene_kind") != "specific" and not str(item.get("wiki_subject") or "").strip():
+                item["wiki_subject"] = person
+                item["scene_kind"] = "specific"
+
+    return _apply_timeline(_densify(seed_items, duration), duration)
+
+
+def _main_person(project: dict[str, Any]) -> str:
+    """Extract the central person/subject for biographical videos ('quem foi X',
+    'história de X'). Empty when the topic isn't about a specific subject."""
+    pattern = re.compile(
+        r"(?:quem foi|quem e|quem é|quem s[aã]o|hist[oó]ria d[eoa]|a vida d[eoa]|"
+        r"biografia d[eoa]|who was|who is)\s+(.+)",
+        re.IGNORECASE,
+    )
+    for text in (str(project.get("idea") or ""), str(project.get("title") or "")):
+        match = pattern.search(text)
+        if not match:
+            continue
+        name = re.split(r"[?.!:,\n]", match.group(1))[0].strip()
+        name = re.sub(r"^(o |a |os |as |the )", "", name, flags=re.IGNORECASE).strip()
+        if 0 < len(name.split()) <= 4:
+            return name
+    return ""
+
+
+def _densify(items: list[dict[str, Any]], duration: float) -> list[dict[str, Any]]:
+    """Split each scene into several shorter cuts (more images per video).
+
+    Aims for one image roughly every GENERATION_SECONDS_PER_VISUAL seconds, each
+    copy using a different query so the b-roll varies (asset dedup keeps media
+    distinct). Capped at GENERATION_MAX_VISUALS.
+    """
+    if not items:
+        return items
+    seconds_per = max(2.0, float(config.GENERATION_SECONDS_PER_VISUAL))
+    max_total = max(len(items), int(config.GENERATION_MAX_VISUALS))
+    slot = max(1.0, max(10.0, duration) / len(items))
+    copies = max(1, round(slot / seconds_per))
+    expanded: list[dict[str, Any]] = []
+    for item in items:
+        queries = [q for q in (item.get("llm_queries") or []) if str(q).strip()] or [item.get("query")]
+        for k in range(copies):
+            clone = dict(item)
+            clone["visual_id"] = ""  # force a fresh id on normalize
+            clone["query"] = queries[k % len(queries)] or item.get("query")
+            expanded.append(clone)
+            if len(expanded) >= max_total:
+                return expanded
+    return expanded
 
 
 def update_visual_items(project_id: str, visual_items: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -98,6 +136,7 @@ def update_visual_items(project_id: str, visual_items: list[dict[str, Any]]) -> 
             "visual_status": "draft" if items else "none",
             "visual_items": items,
             "status": "ready_for_visual" if project.get("status") not in {"archived", "ready_for_render"} else project.get("status"),
+            **_stale_render(project),
         },
     )
 
@@ -147,6 +186,7 @@ def mark_visuals_ready(project_id: str) -> dict[str, Any] | None:
             "visual_status": "ready",
             "visual_items": _normalize_visual_items(items, _duration(project)),
             "status": "ready_for_render",
+            **_stale_render(project),
         },
     )
 
@@ -161,6 +201,10 @@ def normalize_visual_item(item: dict[str, Any], order: int = 1) -> dict[str, Any
         "beat_role": _clean(item.get("beat_role")),
         "type": _choice(item.get("type"), VISUAL_TYPES, "placeholder"),
         "query": _clean(item.get("query")),
+        "llm_queries": _string_list_field(item.get("llm_queries")),
+        "scene_en": _clean(item.get("scene_en")),
+        "wiki_subject": _clean(item.get("wiki_subject")),
+        "scene_kind": _clean(item.get("scene_kind")),
         "description": _clean(item.get("description")),
         "suggested_prompt": _clean(item.get("suggested_prompt")),
         "source": _choice(item.get("source"), VISUAL_SOURCES, "placeholder"),
@@ -174,6 +218,14 @@ def normalize_visual_item(item: dict[str, Any], order: int = 1) -> dict[str, Any
         "status": _choice(item.get("status"), VISUAL_STATUSES, "suggestion"),
         "notes": _clean(item.get("notes")),
         "risk_notes": _clean(item.get("risk_notes")) or _risk_notes(str(item.get("query") or ""), lane),
+        "fallback_visual": _bool_value(item.get("fallback_visual")),
+        "asset_error": _clean(item.get("asset_error")),
+        "media_type": _clean(item.get("media_type")),
+        "search_queries_attempted": _string_list_field(item.get("search_queries_attempted")),
+        "selected_asset_score": _float(item.get("selected_asset_score")),
+        "selected_asset_reason": _clean(item.get("selected_asset_reason")),
+        "selected_query": _clean(item.get("selected_query")),
+        "source_credit": _clean(item.get("source_credit")),
     }
 
 
@@ -226,18 +278,29 @@ def _visual_item(
     script_line: str,
     context: str,
     project: dict[str, Any],
+    llm_entry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    query = _query_for(script_line, context, project)
-    lane = _license_lane({"query": query, "type": _type_for(query), "source": "placeholder"})
+    llm_queries = [str(q).strip() for q in (llm_entry or {}).get("queries") or [] if str(q).strip()]
+    scene_en = str((llm_entry or {}).get("scene") or "").strip()
+    wiki_subject = str((llm_entry or {}).get("subject") or "").strip()
+    scene_kind = str((llm_entry or {}).get("kind") or "").strip().lower()
+    # Prefer the LLM's scene-aware query; fall back to the dictionary builder.
+    query = llm_queries[0] if llm_queries else _query_for(script_line, context, project)
+    item_type = str((llm_entry or {}).get("type") or "").strip().lower() or _type_for(query)
+    lane = _license_lane({"query": query, "type": item_type, "source": "placeholder"})
     return normalize_visual_item(
         {
             "order": order,
             "script_line_index": script_line_index,
             "story_beat_id": story_beat_id,
             "beat_role": beat_role,
-            "type": _type_for(query),
+            "type": item_type if item_type in VISUAL_TYPES else _type_for(query),
             "query": query,
-            "description": _description_for(script_line, context, beat_role, project),
+            "llm_queries": llm_queries,
+            "scene_en": scene_en,
+            "wiki_subject": wiki_subject,
+            "scene_kind": scene_kind,
+            "description": scene_en or _description_for(script_line, context, beat_role, project),
             "suggested_prompt": f"Visual 9:16 faceless para: {script_line or context}",
             "source": "placeholder",
             "license_lane": lane,
@@ -289,6 +352,16 @@ def _license_lane(item: dict[str, Any]) -> str:
     media_type = str(item.get("type") or "").lower()
     query = _normalize(str(item.get("query") or item.get("description") or ""))
     if source == "pexels":
+        return "pexels"
+    if source == "wikimedia":
+        return "wikimedia"
+    if source == "pixabay":
+        return "pixabay"
+    if source == "openverse":
+        return "openverse"
+    if source == "met":
+        return "public_domain"
+    if source == "generated":
         return "safe"
     if media_type == "screenshot":
         return "review"
@@ -342,6 +415,25 @@ def _float(value: object) -> float:
         return round(float(value or 0), 2)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _bool_value(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "sim"}
+
+
+def _stale_render(project: dict[str, Any]) -> dict[str, Any]:
+    """Visual changes invalidate any existing render (Part 4)."""
+    if str(project.get("render_status") or "") in {"ready", "queued", "rendering"}:
+        return {"render_status": "stale"}
+    return {}
+
+
+def _string_list_field(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [_clean(item) for item in value if _clean(item)]
+    return []
 
 
 def _clean(value: object) -> str:

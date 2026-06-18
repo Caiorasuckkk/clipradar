@@ -4,6 +4,7 @@ import 'package:audioplayers/audioplayers.dart';
 
 import '../core/api_client.dart';
 import '../models/generation_project.dart';
+import 'generation_render_screen.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/df_button.dart';
@@ -411,6 +412,14 @@ class _GenerationScreenState extends State<GenerationScreen> {
       if (!mounted) return;
       _snack('Não foi possível remover.');
     }
+  }
+
+  void _openRender(GenerationProject project) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => GenerationRenderScreen(api: _api, project: project),
+      ),
+    );
   }
 
   void _openProject(GenerationProject project) {
@@ -1122,6 +1131,7 @@ class _GenerationScreenState extends State<GenerationScreen> {
             onOpen: _openProject,
             onArchive: _archiveProject,
             onDelete: _deleteProject,
+            onRender: _openRender,
           ),
         },
         const SizedBox(height: 18),
@@ -2578,6 +2588,7 @@ class _ProjectsSection extends StatelessWidget {
     required this.onOpen,
     required this.onArchive,
     required this.onDelete,
+    required this.onRender,
   });
 
   final bool loading;
@@ -2586,6 +2597,7 @@ class _ProjectsSection extends StatelessWidget {
   final ValueChanged<GenerationProject> onOpen;
   final ValueChanged<GenerationProject> onArchive;
   final ValueChanged<GenerationProject> onDelete;
+  final ValueChanged<GenerationProject> onRender;
 
   @override
   Widget build(BuildContext context) {
@@ -2626,6 +2638,7 @@ class _ProjectsSection extends StatelessWidget {
               onOpen: onOpen,
               onArchive: onArchive,
               onDelete: onDelete,
+              onRender: onRender,
             ),
           ),
       ],
@@ -2709,12 +2722,14 @@ class _ProjectCard extends StatelessWidget {
     required this.onOpen,
     required this.onArchive,
     required this.onDelete,
+    required this.onRender,
   });
 
   final GenerationProject project;
   final ValueChanged<GenerationProject> onOpen;
   final ValueChanged<GenerationProject> onArchive;
   final ValueChanged<GenerationProject> onDelete;
+  final ValueChanged<GenerationProject> onRender;
 
   @override
   Widget build(BuildContext context) {
@@ -2826,6 +2841,14 @@ class _ProjectCard extends StatelessWidget {
                   icon: Icons.open_in_new_rounded,
                   onPressed: () => onOpen(project),
                 ),
+                if (project.voiceStatus == 'ready')
+                  DFPrimaryButton(
+                    label: project.renderStatus == 'ready'
+                        ? 'Ver vídeo'
+                        : 'Renderizar',
+                    icon: Icons.movie_creation_rounded,
+                    onPressed: () => onRender(project),
+                  ),
                 DFSecondaryButton(
                   label: 'Arquivar',
                   icon: Icons.archive_rounded,

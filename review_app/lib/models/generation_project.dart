@@ -455,6 +455,13 @@ class GenerationProject {
     required this.voiceGeneratedAt,
     required this.voiceError,
     required this.voiceOutdated,
+    required this.voiceWordsPath,
+    required this.voiceWordCount,
+    required this.renderStatus,
+    required this.renderVideoUrl,
+    required this.renderThumbnailUrl,
+    required this.renderDurationSeconds,
+    required this.renderSegmentCount,
     required this.creationMode,
     required this.creationModeLabel,
     required this.inputTopic,
@@ -562,6 +569,13 @@ class GenerationProject {
   final String voiceGeneratedAt;
   final String voiceError;
   final bool voiceOutdated;
+  final String voiceWordsPath;
+  final int voiceWordCount;
+  final String renderStatus;
+  final String renderVideoUrl;
+  final String renderThumbnailUrl;
+  final num? renderDurationSeconds;
+  final int renderSegmentCount;
   final String creationMode;
   final String creationModeLabel;
   final String inputTopic;
@@ -688,6 +702,15 @@ class GenerationProject {
       voiceGeneratedAt: _string(json['voice_generated_at']),
       voiceError: _string(json['voice_error']),
       voiceOutdated: _bool(json['voice_outdated']),
+      voiceWordsPath: _string(json['voice_words_path']),
+      voiceWordCount: _int(json['voice_word_count']),
+      renderStatus: _string(json['render_status']).isEmpty
+          ? 'none'
+          : _string(json['render_status']),
+      renderVideoUrl: _string(json['render_video_url']),
+      renderThumbnailUrl: _string(json['render_thumbnail_url']),
+      renderDurationSeconds: _num(json['render_duration_seconds']),
+      renderSegmentCount: _int(json['render_segment_count']),
       creationMode: _string(json['creation_mode']).isEmpty
           ? 'legacy'
           : _string(json['creation_mode']),
@@ -819,6 +842,13 @@ class GenerationProject {
       'voice_generated_at': voiceGeneratedAt,
       'voice_error': voiceError,
       'voice_outdated': voiceOutdated,
+      'voice_words_path': voiceWordsPath,
+      'voice_word_count': voiceWordCount,
+      'render_status': renderStatus,
+      'render_video_url': renderVideoUrl,
+      'render_thumbnail_url': renderThumbnailUrl,
+      'render_duration_seconds': renderDurationSeconds,
+      'render_segment_count': renderSegmentCount,
       'creation_mode': creationMode,
       'creation_mode_label': creationModeLabel,
       'input_topic': inputTopic,

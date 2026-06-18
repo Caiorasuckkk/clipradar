@@ -35,6 +35,14 @@ app.include_router(generation_router)
 app.include_router(analytics_router)
 
 
+@app.on_event("startup")
+def _startup() -> None:
+    # Start the SQLite-backed background job worker (render/voice/script jobs).
+    from app.services import job_queue_service
+
+    job_queue_service.bootstrap()
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {"name": "ClipRadar Local API", "version": "0.5.21"}

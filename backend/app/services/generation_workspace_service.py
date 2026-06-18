@@ -12,6 +12,7 @@ from app.services.generation_engine_service import (
     generate_engine_ideas,
     generate_engine_script,
 )
+from app.services.generation_llm_provider_service import sanitize_narration_lines
 from app.services.generation_script_quality_service import score_generation_script
 from app.services.generation_watchability_service import (
     content_format_label,
@@ -207,7 +208,9 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "watchability_negative_signals": _string_list(payload.get("watchability_negative_signals"))
         or watchability["watchability_negative_signals"],
         "hook": _clean(payload.get("hook")),
-        "script_lines": _string_list(payload.get("script_lines")),
+        "script_lines": sanitize_narration_lines(
+            payload.get("script_lines"), payload.get("cta")
+        ),
         "cta": _clean(payload.get("cta")),
         "hashtags": _string_list(payload.get("hashtags")),
         "visual_context": _string_list(payload.get("visual_context")),
@@ -258,6 +261,22 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "pacing": _clean(payload.get("pacing")),
         "script_quality_score": _float_or_none(payload.get("script_quality_score")) or quality["script_quality_score"],
         "script_quality_tier": _clean(payload.get("script_quality_tier")) or quality["script_quality_tier"],
+        "script_quality_score_heuristic": _float_or_none(payload.get("script_quality_score_heuristic")),
+        "script_quality_tier_heuristic": _clean(payload.get("script_quality_tier_heuristic")),
+        "judge_used": _bool(payload.get("judge_used")),
+        "judge_overall": _float_or_none(payload.get("judge_overall")),
+        "judge_tier": _clean(payload.get("judge_tier")),
+        "judge_verdict": _clean(payload.get("judge_verdict")),
+        "judge_hook_score": _float_or_none(payload.get("judge_hook_score")),
+        "judge_retention_score": _float_or_none(payload.get("judge_retention_score")),
+        "judge_specificity_score": _float_or_none(payload.get("judge_specificity_score")),
+        "judge_naturalness_score": _float_or_none(payload.get("judge_naturalness_score")),
+        "judge_strengths": _string_list(payload.get("judge_strengths")),
+        "judge_weaknesses": _string_list(payload.get("judge_weaknesses")),
+        "judge_critique": _clean(payload.get("judge_critique")),
+        "judge_suggested_hook": _clean(payload.get("judge_suggested_hook")),
+        "judge_rewrites_applied": _int(payload.get("judge_rewrites_applied")),
+        "judge_model": _clean(payload.get("judge_model")),
         "script_positive_signals": _string_list(payload.get("script_positive_signals"))
         or quality["script_positive_signals"],
         "script_negative_signals": _string_list(payload.get("script_negative_signals"))
@@ -281,10 +300,52 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "voice_pitch": _clean(payload.get("voice_pitch")),
         "voice_audio_path": _clean(payload.get("voice_audio_path")),
         "voice_audio_url": _clean(payload.get("voice_audio_url")),
+        "voice_words_path": _clean(payload.get("voice_words_path")),
+        "voice_word_count": _int(payload.get("voice_word_count")),
+        "voice_captions_path": _clean(payload.get("voice_captions_path")),
+        "voice_caption_count": _int(payload.get("voice_caption_count")),
+        "voice_words_source": _clean(payload.get("voice_words_source")),
+        "narration_text": _clean_multiline(payload.get("narration_text")),
+        "narration_style": _clean(payload.get("narration_style")),
+        "narration_style_label": _clean(payload.get("narration_style_label")),
+        "narration_polished_by": _clean(payload.get("narration_polished_by")),
         "voice_duration_seconds": _float_or_none(payload.get("voice_duration_seconds")),
         "voice_generated_at": _clean(payload.get("voice_generated_at")),
         "voice_error": _clean(payload.get("voice_error")),
         "voice_outdated": _bool(payload.get("voice_outdated")),
+        "render_status": _render_status(payload.get("render_status")),
+        "render_job_id": _clean(payload.get("render_job_id")),
+        "render_video_path": _clean(payload.get("render_video_path")),
+        "render_video_url": _clean(payload.get("render_video_url")),
+        "render_thumbnail_path": _clean(payload.get("render_thumbnail_path")),
+        "render_thumbnail_url": _clean(payload.get("render_thumbnail_url")),
+        "render_duration_seconds": _float_or_none(payload.get("render_duration_seconds")),
+        "render_segment_count": _int(payload.get("render_segment_count")),
+        "render_width": _int(payload.get("render_width")),
+        "render_height": _int(payload.get("render_height")),
+        "render_generated_at": _clean(payload.get("render_generated_at")),
+        "render_error": _clean(payload.get("render_error")),
+        "visual_fallback_used": _bool(payload.get("visual_fallback_used")),
+        "visual_fallback_reason": _clean(payload.get("visual_fallback_reason")),
+        "auto_status": _clean(payload.get("auto_status")),
+        "auto_job_id": _clean(payload.get("auto_job_id")),
+        "auto_error": _clean(payload.get("auto_error")),
+        "persona": _clean(payload.get("persona")),
+        "persona_label": _clean(payload.get("persona_label")),
+        "scriptwriter": _clean_multiline(payload.get("scriptwriter")),
+        "music_mood": _clean(payload.get("music_mood")),
+        "visual_style": _clean(payload.get("visual_style")),
+        "posted_platform": _clean(payload.get("posted_platform")),
+        "posted_url": _clean(payload.get("posted_url")),
+        "posted_video_id": _clean(payload.get("posted_video_id")),
+        "posted_at": _clean(payload.get("posted_at")),
+        "posted_notes": _clean_multiline(payload.get("posted_notes")),
+        "metric_views": _int(payload.get("metric_views")),
+        "metric_likes": _int(payload.get("metric_likes")),
+        "metric_comments": _int(payload.get("metric_comments")),
+        "metric_retention": _float_or_none(payload.get("metric_retention")),
+        "metric_ctr": _float_or_none(payload.get("metric_ctr")),
+        "metrics_updated_at": _clean(payload.get("metrics_updated_at")),
         "created_at": str(payload.get("created_at") or _now()),
         "updated_at": str(payload.get("updated_at") or _now()),
     }
@@ -315,7 +376,12 @@ def _save_projects(projects: list[dict[str, Any]]) -> None:
 
 def _status(value: object) -> str:
     text = str(value or "idea")
-    return text if text in {"idea", "script", "ready_for_voice", "ready_for_visual", "ready_for_render", "archived"} else "idea"
+    return text if text in {"idea", "script", "ready_for_voice", "ready_for_visual", "ready_for_render", "rendered", "archived"} else "idea"
+
+
+def _render_status(value: object) -> str:
+    text = str(value or "none").strip().lower()
+    return text if text in {"none", "queued", "rendering", "ready", "failed", "cancelled", "stale"} else "none"
 
 
 def _visual_status(value: object) -> str:
@@ -362,7 +428,7 @@ def _engine_mode(value: object) -> str:
 
 def _provider(value: object) -> str:
     text = str(value or "none").strip().lower()
-    return text if text in {"none", "gemini"} else "none"
+    return text if text in {"none", "gemini", "openai"} else "none"
 
 
 def _voice_status(value: object) -> str:

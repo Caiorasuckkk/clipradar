@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -26,6 +27,17 @@ from app.services.generation_creation_service import (
     create_projects_from_opportunities_batch,
 )
 from app.services.generation_opportunity_service import search_opportunities
+from app.services.generation_autopilot_service import (
+    get_auto_status,
+    start_auto_generation,
+)
+from app.services.generation_personas import list_personas
+from app.services.generation_trends_service import trending_topics
+from app.services.generation_performance_service import (
+    mark_posted,
+    performance_summary,
+    refresh_metrics,
+)
 from app.services.generation_engine_service import engine_status
 from app.services.generation_llm_provider_service import generate_research_brief
 from app.services.generation_guardrail_service import analyze_generation_project
@@ -37,6 +49,15 @@ from app.services.generation_voice_service import (
     list_voices,
 )
 from app.services.generation_stock_media_service import search_stock_media
+from app.services import job_queue_service
+from app.services import generation_narration_service
+from app.services.generation_render_service import (
+    RenderError,
+    get_render_status,
+    get_render_video_path,
+    prepare_render,
+    request_render,
+)
 from app.services.generation_visual_service import (
     add_visual_item,
     mark_visual_item_selected,
@@ -55,6 +76,18 @@ class TriggerApprovedGenerationPayload(BaseModel):
     candidate_id: str | None = None
     run_async: bool = True
     retry_failed: bool = False
+
+
+class GenerationAutoPayload(BaseModel):
+    theme: str
+    persona: str = ""
+    language: str = "pt-BR"
+    speed: str = "normal"
+    voice: str = ""
+    niche: str = ""
+    tone: str = "curioso"
+    duration_seconds: int = 60
+    narrative_style: str = ""
 
 
 class GenerationIdeaPayload(BaseModel):
@@ -339,6 +372,122 @@ def get_generation_status() -> dict[str, Any]:
 @router.get("/engine/status")
 def get_generation_engine_status() -> dict[str, Any]:
     return engine_status()
+
+
+@router.get("/personas")
+def get_generation_personas() -> dict[str, Any]:
+    return {"personas": list_personas()}
+
+
+@router.get("/trends")
+def get_generation_trends(
+    language: str = "pt-BR", limit: int = 10, refresh: bool = False
+) -> dict[str, Any]:
+    """Top trending história/curiosidades topics (YouTube/TikTok) to seed themes."""
+    return trending_topics(language=language, limit=limit, refresh=refresh)
+
+
+class GenerationPostedPayload(BaseModel):
+    platform: str = "youtube"
+    url: str = ""
+    views: int | None = None
+    retention: float | None = None
+    ctr: float | None = None
+    notes: str = ""
+
+
+@router.get("/performance")
+def get_generation_performance(refresh: bool = False) -> dict[str, Any]:
+    return performance_summary(refresh=refresh)
+
+
+@router.post("/projects/{project_id}/posted")
+def post_generation_project_posted(
+    project_id: str, payload: GenerationPostedPayload
+) -> dict[str, Any]:
+    project = mark_posted(
+        project_id,
+        platform=payload.platform,
+        url=payload.url,
+        views=payload.views,
+        retention=payload.retention,
+        ctr=payload.ctr,
+        notes=payload.notes,
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="generation_project_not_found")
+    return project
+
+
+@router.post("/projects/{project_id}/metrics/refresh")
+def post_generation_project_metrics_refresh(project_id: str) -> dict[str, Any]:
+    project = refresh_metrics(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="generation_project_not_found")
+    return project
+
+
+@router.post("/auto")
+def post_generation_auto(payload: GenerationAutoPayload) -> dict[str, Any]:
+    """One-shot: theme (+ studio/persona) -> full video generated automatically."""
+    try:
+        return start_auto_generation(
+            theme=payload.theme,
+            persona=payload.persona,
+            language=payload.language,
+            speed=payload.speed,
+            voice=payload.voice,
+            niche=payload.niche,
+            tone=payload.tone,
+            duration_seconds=payload.duration_seconds,
+            narrative_style=payload.narrative_style,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+class GenerationAutoBatchPayload(BaseModel):
+    theme: str
+    persona: str = ""
+    speed: str = "normal"
+    voice: str = ""
+    languages: list[str] = ["pt-BR", "en-US"]
+
+
+@router.post("/auto/batch")
+def post_generation_auto_batch(payload: GenerationAutoBatchPayload) -> dict[str, Any]:
+    """One theme -> one auto video per language (e.g. pt-BR + en-US for 2 channels)."""
+    languages = [str(lang).strip() for lang in (payload.languages or []) if str(lang).strip()]
+    if not languages:
+        languages = ["pt-BR"]
+    # de-dupe while preserving order
+    seen: set[str] = set()
+    languages = [lang for lang in languages if not (lang in seen or seen.add(lang))]
+
+    items: list[dict[str, Any]] = []
+    for language in languages:
+        try:
+            started = start_auto_generation(
+                theme=payload.theme,
+                persona=payload.persona,
+                language=language,
+                speed=payload.speed,
+                voice=payload.voice,
+            )
+            items.append({"language": language, **started})
+        except ValueError as error:
+            if not items:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            items.append({"language": language, "error": str(error)})
+    return {"items": items}
+
+
+@router.get("/projects/{project_id}/auto/status")
+def get_generation_project_auto_status(project_id: str) -> dict[str, Any]:
+    status = get_auto_status(project_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="generation_project_not_found")
+    return status
 
 
 @router.post("/ideas")
@@ -711,3 +860,137 @@ def delete_generation_project_voice(project_id: str) -> dict[str, Any]:
     except VoiceGenerationError as error:
         status_code = 404 if "não encontrado" in error.message.lower() else 400
         raise HTTPException(status_code=status_code, detail=error.message) from error
+
+
+class GenerationRenderPayload(BaseModel):
+    overwrite: bool = True
+    allow_visual_fallback: bool = False
+    force: bool = False
+
+
+class GenerationRenderPreparePayload(BaseModel):
+    mark_visual_ready: bool = False
+    allow_visual_fallback: bool = False
+
+
+class GenerationNarrationPolishPayload(BaseModel):
+    style: str = ""
+
+
+@router.get("/narration/presets")
+def get_generation_narration_presets() -> dict[str, Any]:
+    return {
+        "presets": generation_narration_service.list_presets(),
+        "default": generation_narration_service.DEFAULT_STYLE,
+    }
+
+
+@router.post("/projects/{project_id}/narration/polish")
+def post_generation_project_narration_polish(
+    project_id: str,
+    payload: GenerationNarrationPolishPayload = Body(
+        default_factory=GenerationNarrationPolishPayload
+    ),
+) -> dict[str, Any]:
+    project = generation_narration_service.apply_narration_polish(
+        project_id, style=payload.style or None
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="generation_project_not_found")
+    return project
+
+
+def _render_error_http(error: RenderError) -> HTTPException:
+    status_code = 404 if error.code == "project_not_found" else 400
+    return HTTPException(
+        status_code=status_code,
+        detail={"message": error.message, "code": error.code},
+    )
+
+
+@router.post("/projects/{project_id}/render/prepare")
+def post_generation_project_render_prepare(
+    project_id: str,
+    payload: GenerationRenderPreparePayload = Body(
+        default_factory=GenerationRenderPreparePayload
+    ),
+) -> dict[str, Any]:
+    """Ensure render prerequisites (words.json, visuals, status) without rendering."""
+    try:
+        return prepare_render(
+            project_id,
+            mark_visual_ready=payload.mark_visual_ready,
+            allow_visual_fallback=payload.allow_visual_fallback,
+        )
+    except RenderError as error:
+        raise _render_error_http(error) from error
+
+
+@router.post("/projects/{project_id}/render")
+def post_generation_project_render(
+    project_id: str,
+    payload: GenerationRenderPayload = Body(default_factory=GenerationRenderPayload),
+) -> dict[str, Any]:
+    """Enqueue a background render job and return the job handle immediately."""
+    try:
+        return request_render(
+            project_id,
+            overwrite=payload.overwrite,
+            allow_visual_fallback=payload.allow_visual_fallback,
+            force=payload.force,
+        )
+    except RenderError as error:
+        raise _render_error_http(error) from error
+
+
+@router.get("/projects/{project_id}/render/status")
+def get_generation_project_render_status(project_id: str) -> dict[str, Any]:
+    status = get_render_status(project_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="generation_project_not_found")
+    return status
+
+
+@router.get("/projects/{project_id}/render/video")
+def get_generation_project_render_video(project_id: str) -> FileResponse:
+    try:
+        path = get_render_video_path(project_id)
+    except RenderError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+
+@router.get("/projects/{project_id}/render/thumbnail")
+def get_generation_project_render_thumbnail(project_id: str) -> FileResponse:
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="generation_project_not_found")
+    raw = str(project.get("render_thumbnail_path") or "")
+    path = Path(raw) if raw else None
+    if not path or not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="render_thumbnail_not_found")
+    return FileResponse(path, media_type="image/jpeg", filename=path.name)
+
+
+@router.get("/jobs/{job_id}")
+def get_generation_job(job_id: str) -> dict[str, Any]:
+    job = job_queue_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job_not_found")
+    return job
+
+
+@router.post("/jobs/{job_id}/cancel")
+def post_generation_job_cancel(job_id: str) -> dict[str, Any]:
+    job = job_queue_service.cancel_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job_not_found")
+    return job
+
+
+@router.post("/jobs/{job_id}/retry")
+def post_generation_job_retry(job_id: str) -> dict[str, Any]:
+    job = job_queue_service.retry_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job_not_found")
+    return job
