@@ -346,6 +346,11 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "metric_retention": _float_or_none(payload.get("metric_retention")),
         "metric_ctr": _float_or_none(payload.get("metric_ctr")),
         "metrics_updated_at": _clean(payload.get("metrics_updated_at")),
+        "publish_titles": _string_list(payload.get("publish_titles")),
+        "publish_description": _clean_multiline(payload.get("publish_description")),
+        "publish_hashtags": _string_list(payload.get("publish_hashtags")),
+        "publish_best_times": _clean_multiline(payload.get("publish_best_times")),
+        "publish_generated_at": _clean(payload.get("publish_generated_at")),
         "created_at": str(payload.get("created_at") or _now()),
         "updated_at": str(payload.get("updated_at") or _now()),
     }

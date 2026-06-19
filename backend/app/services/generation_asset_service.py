@@ -41,7 +41,9 @@ from app.services.generation_visual_service import normalize_visual_item
 ASSETS_DIR = config.STORAGE_GENERATION_ASSETS_DIR
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".m4v"}
-MIN_VIDEO_SCORE = 2.0
+# Stock só é aceito quando é FORTEMENTE relevante; abaixo disso, geramos a imagem
+# com Flux (alinhada à cena) em vez de usar um clipe mais ou menos relacionado.
+MIN_VIDEO_SCORE = 3.0
 TARGET_HEIGHT = config.GENERATION_RENDER_HEIGHT
 TARGET_WIDTH = config.GENERATION_RENDER_WIDTH
 
@@ -155,7 +157,7 @@ def _video_is_historical(project: dict[str, Any]) -> bool:
     """Whole-video signal: historical niche, any LLM-marked specific scene, or
     period markers in the title/idea/brief. Lets us route generic period scenes
     (e.g. 'ancient queen') to Wikimedia instead of modern stock."""
-    if str(project.get("niche") or "").strip().lower() in _HISTORY_NICHES:
+    if any(h in str(project.get("niche") or "").strip().lower() for h in _HISTORY_NICHES):
         return True
     items = project.get("visual_items") or []
     if any(isinstance(it, dict) and str(it.get("scene_kind") or "").lower() == "specific" for it in items):
@@ -243,77 +245,80 @@ def _prefer_specific(item: dict[str, Any], project: dict[str, Any]) -> bool:
     return _video_is_historical(project)
 
 
+def _try_real_image(
+    item: dict[str, Any],
+    project: dict[str, Any],
+    subject: str,
+    queries: list[str],
+    used_ids: set[str],
+) -> bool:
+    """Pick the best REAL image (Wikimedia/Openverse/Met) for a named subject,
+    entity-gated, and attach it. Returns True on success.
+
+    Tries the subject + period-flavored queries; artifact-style terms first (that's
+    what museums hold). Ranks tied-to-theme-entity FIRST, then relevance, then quality.
+    """
+    terms: list[str] = []
+    for term in [subject, *queries]:
+        term = str(term or "").strip()
+        if term and term not in terms:
+            terms.append(term)
+    terms.sort(key=lambda t: 0 if _has_artifact_word(t) else 1)
+
+    entity_words = _theme_entity_words(project)
+    w_best, w_score, w_term = None, (-1, -1.0, -1.0), subject
+    for idx, term in enumerate(terms[:4]):
+        for result in _real_image_results(term, include_met=(idx == 0)):
+            media_id = str(result.get("media_id") or "")
+            if media_id and media_id in used_ids:
+                continue
+            ent = 1 if _entity_hit(result, entity_words) else 0
+            rel = _relevance(result, term)
+            quality, _reason = _score(result, term)
+            rank = (ent, float(rel), float(quality))
+            if rank > w_score:
+                w_best, w_score, w_term = result, rank, term
+        if w_best is not None and _real_image_ok(w_score, entity_words):
+            break
+    # Entity gate: if the topic has named entities, the real image MUST contain one.
+    if w_best is not None and _real_image_ok(w_score, entity_words):
+        return _apply_asset(item, w_best, "photo", w_score[2], f"real:{w_term}", w_term, used_ids)
+    return False
+
+
 def _resolve_item_asset(
     item: dict[str, Any], project: dict[str, Any], used_ids: set[str], ai_remaining: int = 0
 ) -> dict[str, Any] | None:
     queries = build_search_queries(item, project)
     item["search_queries_attempted"] = queries
 
-    # Specific/historical scenes: prefer a REAL image of the subject from
-    # Wikimedia over a generic (often modern) stock clip — e.g. a Nero bust
-    # instead of a stock "lavish banquet" video with a modern person.
     prefer_specific = _prefer_specific(item, project)
     subject = str(item.get("wiki_subject") or "").strip()
-    # History scenes without an explicit subject still try Wikimedia first using
-    # the period-flavored query, so a "musician" scene becomes a Roman fresco,
-    # not a modern band.
     if not subject and prefer_specific and queries:
         subject = queries[0]
     real_sources = wikimedia_configured() or config.GENERATION_ENABLE_OPENVERSE or config.GENERATION_ENABLE_MET
-    if subject and prefer_specific and real_sources:
-        # Try the specific subject AND the period-flavored queries so weak/short
-        # subjects (e.g. "Roman feast") still find a real fresco/painting.
-        # Artifact-style terms (relief/bust/fresco/papyrus...) first — those are
-        # what museums/Wikimedia actually hold for ancient topics.
-        terms: list[str] = []
-        for term in [subject, *queries]:
-            term = str(term or "").strip()
-            if term and term not in terms:
-                terms.append(term)
-        terms.sort(key=lambda t: 0 if _has_artifact_word(t) else 1)
+    has_real_subject = bool(subject and prefer_specific and real_sources)
 
-        entity_words = _theme_entity_words(project)
-        # Rank: tied-to-theme-entity FIRST, then relevance, then quality. A
-        # generic "children/family" image must not beat one that actually shows
-        # the theme (Mongol/Genghis/...).
-        w_best, w_score, w_term = None, (-1, -1.0, -1.0), subject
-        for idx, term in enumerate(terms[:4]):
-            for result in _real_image_results(term, include_met=(idx == 0)):
-                media_id = str(result.get("media_id") or "")
-                if media_id and media_id in used_ids:
-                    continue
-                ent = 1 if _entity_hit(result, entity_words) else 0
-                rel = _relevance(result, term)
-                quality, _reason = _score(result, term)
-                rank = (ent, float(rel), float(quality))
-                if rank > w_score:
-                    w_best, w_score, w_term = result, rank, term
-            if w_best is not None and _real_image_ok(w_score, entity_words):
-                break
-        # 100%-theme gate: if the topic has named entities, the real image MUST
-        # contain one (not just match the era); otherwise fall to AI (on-theme).
-        if w_best is not None and _real_image_ok(w_score, entity_words):
-            if _apply_asset(item, w_best, "photo", w_score[2], f"real:{w_term}", w_term, used_ids):
-                return item
+    # EXCEPTION: a real, MODERN, photographable person/team (e.g. Pelé, Messi, a
+    # national team) → use the REAL photo FIRST. Flux would invent a fake face.
+    # Period/ancient subjects (no real photo exists) skip this and go to Flux.
+    person_first = has_real_subject and not _is_period_topic(project)
+    if person_first and _try_real_image(item, project, subject, queries, used_ids):
+        return item
 
-    # Specific scene with no good real image: GENERATE it (on-topic) instead of
-    # grabbing a random/modern stock clip (that's where the off-topic "cat"
-    # images came from). Capped per video by ai_remaining.
-    if prefer_specific and ai_remaining > 0:
-        data = generate_ai_image(_image_prompt(item, project))
-        local = _save_generated_image(data)
-        if local:
-            item.update(
-                {
-                    "source": "generated", "license_lane": "safe", "media_url": "",
-                    "media_path": str(local), "media_type": "image", "status": "downloaded",
-                    "asset_error": "", "fallback_visual": False, "selected_asset_score": 0.0,
-                    "selected_asset_reason": "ai_generated_specific",
-                    "selected_query": _image_prompt(item, project)[:80], "source_credit": "AI generated",
-                }
-            )
+    # PRIMARY SOURCE: Runware/Flux — generate the scene aligned to this line.
+    if ai_remaining > 0:
+        if _apply_ai_image(item, project, "ai_generated"):
             return item
 
+    # SECONDARY SOURCE: a REAL image from Wikimedia/Openverse/Met (when Flux is
+    # capped/unavailable), best for specific named subjects (e.g. a Nero bust).
+    if has_real_subject and not person_first:
+        if _try_real_image(item, project, subject, queries, used_ids):
+            return item
+
+    # LAST RESORT: stock (Pexels/Pixabay) — only when Flux and Wikimedia both
+    # produced nothing. Requires a strong relevance score (MIN_VIDEO_SCORE).
     best: dict[str, Any] | None = None
     best_score = -1.0
     best_reason = ""
@@ -335,7 +340,8 @@ def _resolve_item_asset(
         if _apply_asset(item, best, "video", best_score, best_reason, best_query, used_ids):
             return item
 
-    # Photo fallback when no good video clip was found.
+    # Photo fallback — only a GOOD (relevant) photo. Weak matches go to AI below
+    # for better alignment with the narration.
     for query in queries[:2]:
         photos = _photo_results(query)
         for result in photos:
@@ -343,38 +349,13 @@ def _resolve_item_asset(
             if media_id and media_id in used_ids:
                 continue
             score, reason = _score(result, query)
-            if score >= 1.0:
+            if score >= MIN_VIDEO_SCORE:
                 if _apply_asset(item, result, "photo", score, reason, query, used_ids):
                     return item
 
-    # Last resort: even a low-score video is better than nothing.
+    # Even a low-score video beats a blank screen (Flux + Wikimedia already failed).
     if best is not None:
         if _apply_asset(item, best, "video", best_score, best_reason or "low_score", best_query, used_ids):
-            return item
-
-    # Generative fallback: stock + Wikimedia had nothing — create the scene with
-    # AI (covers modern people, current athletes, anime, etc.). Capped per video.
-    if ai_remaining > 0:
-        prompt = _image_prompt(item, project)
-        data = generate_ai_image(prompt)
-        local = _save_generated_image(data)
-        if local:
-            item.update(
-                {
-                    "source": "generated",
-                    "license_lane": "safe",
-                    "media_url": "",
-                    "media_path": str(local),
-                    "media_type": "image",
-                    "status": "downloaded",
-                    "asset_error": "",
-                    "fallback_visual": False,
-                    "selected_asset_score": 0.0,
-                    "selected_asset_reason": "ai_generated",
-                    "selected_query": prompt[:80],
-                    "source_credit": "AI generated",
-                }
-            )
             return item
 
     item["asset_error"] = "sem resultado em stock/wikimedia"
@@ -388,25 +369,48 @@ def _image_prompt(item: dict[str, Any], project: dict[str, Any]) -> str:
         or str(item.get("query") or "").strip()
         or str(project.get("title") or "").strip()
     )
+    base_low = base.lower()
+
+    # Anchor the scene in its real subject/entities so the image matches the
+    # narration — only for SPECIFIC scenes (don't force a name onto generic mood shots).
+    anchor = ""
+    is_specific = (
+        str(item.get("scene_kind") or "").strip().lower() == "specific"
+        or bool(str(item.get("wiki_subject") or "").strip())
+    )
+    if is_specific:
+        brief = project.get("research_brief") if isinstance(project.get("research_brief"), dict) else {}
+        names: list[str] = []
+        subject = str(item.get("wiki_subject") or brief.get("subject") or "").strip()
+        if subject and subject.lower() not in base_low:
+            names.append(subject)
+        for entity in (brief.get("key_entities") or [])[:3]:
+            ent = str(entity or "").strip()
+            if ent and ent.lower() not in base_low and ent.lower() not in " ".join(names).lower():
+                names.append(ent)
+        if names:
+            anchor = ", featuring " + ", ".join(names[:2])
+
     # A persona/studio can pin the visual style (e.g. "dark, noir" for crime).
     persona_style = str(project.get("visual_style") or "").strip()
     blob = f"{project.get('niche') or ''} {project.get('title') or ''} {project.get('idea') or ''}".lower()
     if persona_style:
-        style = f", {persona_style}, vertical 9:16"
+        style = f", {persona_style}"
     elif "anime" in blob:
-        style = ", anime style illustration, vibrant, vertical 9:16"
+        style = ", anime style illustration, vibrant"
     elif _is_period_topic(project):
-        style = ", historically accurate, realistic, cinematic lighting, vertical 9:16"
+        style = ", historically accurate, period-accurate setting and clothing, realistic, cinematic lighting"
     else:
-        style = ", cinematic, photorealistic, vertical 9:16"
-    return f"{base}{style}".strip()
+        style = ", cinematic, photorealistic"
+    quality = ", highly detailed, sharp focus, dramatic composition, vertical 9:16 format"
+    return f"{base}{anchor}{style}{quality}".strip()
 
 
 def _is_period_topic(project: dict[str, Any]) -> bool:
     """Strict 'past era' check for the AI image STYLE (so a modern 2026 match
     isn't rendered as 'historically accurate'). Unlike _video_is_historical,
     this ignores the 'any specific scene' signal."""
-    if str(project.get("niche") or "").strip().lower() in _HISTORY_NICHES:
+    if any(h in str(project.get("niche") or "").strip().lower() for h in _HISTORY_NICHES):
         return True
     brief = project.get("research_brief") if isinstance(project.get("research_brief"), dict) else {}
     blob = _strip_accents_lower(
@@ -414,6 +418,25 @@ def _is_period_topic(project: dict[str, Any]) -> bool:
                   " ".join(str(f) for f in (brief.get("key_facts") or []))])
     )
     return any(marker in blob for marker in _PERIOD_MARKERS)
+
+
+def _apply_ai_image(item: dict[str, Any], project: dict[str, Any], reason: str) -> bool:
+    """Generate a scene-aligned image (Runware/Flux first, OpenAI last resort) and
+    attach it to the item. Returns True on success."""
+    prompt = _image_prompt(item, project)
+    local = _save_generated_image(generate_ai_image(prompt))
+    if not local:
+        return False
+    item.update(
+        {
+            "source": "generated", "license_lane": "safe", "media_url": "",
+            "media_path": str(local), "media_type": "image", "status": "downloaded",
+            "asset_error": "", "fallback_visual": False, "selected_asset_score": 0.0,
+            "selected_asset_reason": reason, "selected_query": prompt[:80],
+            "source_credit": "AI generated",
+        }
+    )
+    return True
 
 
 def _save_generated_image(data: bytes | None) -> Path | None:

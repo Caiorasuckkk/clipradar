@@ -58,16 +58,33 @@ def build_caption_blocks(
             return
         text = _clean_text(" ".join(str(w.get("text") or "") for w in group))
         if text:
+            word_meta = [
+                {
+                    "text": str(w.get("text") or "").strip(),
+                    "start": round(float(w["start"]), 3),
+                    "end": round(float(w["end"]), 3),
+                }
+                for w in group
+                if w.get("start") is not None and w.get("end") is not None and str(w.get("text") or "").strip()
+            ]
             blocks.append(
                 {
                     "start": round(float(group[0]["start"]), 3),
                     "end": round(float(group[-1]["end"]), 3),
                     "text": text,
+                    "words": word_meta,
                 }
             )
         group.clear()
 
+    pause_gap = max(0.0, float(config.GENERATION_CAPTION_PAUSE_GAP))
+    prev_end = 0.0
     for word in words:
+        start = float(word.get("start") or prev_end)
+        # A real pause in the speech is a natural place to break the caption,
+        # so phrases stay whole instead of being cut by raw word count.
+        if group and prev_end and (start - prev_end) >= pause_gap and len(group) >= min_words:
+            flush()
         group.append(word)
         token = str(word.get("text") or "").strip()
         count = len(group)
@@ -75,6 +92,7 @@ def build_caption_blocks(
         soft_break = bool(_SOFT_BREAK.search(token))
         if count >= max_words or sentence_end or (soft_break and count >= min_words):
             flush()
+        prev_end = float(word.get("end") or start)
     flush()
     return validate_and_fix(blocks, audio_duration)
 
@@ -101,7 +119,10 @@ def validate_and_fix(
         text = _clean_text(str(cue.get("text") or ""))
         if not text:
             continue
-        fixed.append({"start": round(start, 3), "end": round(end, 3), "text": text})
+        entry = {"start": round(start, 3), "end": round(end, 3), "text": text}
+        if isinstance(cue.get("words"), list) and cue["words"]:
+            entry["words"] = cue["words"]
+        fixed.append(entry)
         previous_end = end
     return fixed
 

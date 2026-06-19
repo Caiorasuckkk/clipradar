@@ -19,8 +19,13 @@ from app.services import generation_caption_service as captions
 
 AUDIO_DIR = config.STORAGE_GENERATION_DIR / "audio"
 DEFAULT_VOICES = [
-    # edge-tts (free)
+    # edge-tts (free) — DEFAULT_VOICES[0] é o fallback seguro; mantenha a Thalita aqui.
     {"name": "pt-BR-ThalitaMultilingualNeural", "label": "Thalita (natural)", "locale": "pt-BR", "gender": "female", "provider": "edge-tts"},
+    # Local XTTS — vozes clonadas por estúdio (grátis, na GPU).
+    {"name": "xtts:marco", "label": "Marco (História)", "locale": "multi", "gender": "male", "provider": "xtts"},
+    {"name": "xtts:atlas", "label": "Atlas (Mitologia)", "locale": "multi", "gender": "male", "provider": "xtts"},
+    {"name": "xtts:carlos", "label": "Carlos (Ciência)", "locale": "multi", "gender": "male", "provider": "xtts"},
+    {"name": "xtts:clara", "label": "Doutora Clara (Psicologia)", "locale": "multi", "gender": "female", "provider": "xtts"},
     {"name": "pt-BR-AntonioNeural", "label": "Antônio", "locale": "pt-BR", "gender": "male", "provider": "edge-tts"},
     {"name": "pt-BR-FranciscaNeural", "label": "Francisca", "locale": "pt-BR", "gender": "female", "provider": "edge-tts"},
     {"name": "en-US-GuyNeural", "label": "Guy", "locale": "en-US", "gender": "male", "provider": "edge-tts"},
@@ -69,9 +74,12 @@ def generate_voice_for_project(project_id: str, voice: str, rate: str = "+0%", p
         raise VoiceGenerationError("Roteiro vazio. Crie ou edite um roteiro antes de gerar voz.", project)
     selected_voice = voice if _valid_voice(voice) else DEFAULT_VOICES[0]["name"]
     provider, voice_id = _voice_provider(selected_voice)
+    language = str(project.get("language") or "pt-BR")
     if provider == "openai" and not config.OPENAI_API_KEY:
         provider, selected_voice, voice_id = "edge", DEFAULT_VOICES[0]["name"], DEFAULT_VOICES[0]["name"]
     if provider == "elevenlabs" and not config.ELEVENLABS_API_KEY:
+        provider, selected_voice, voice_id = "edge", DEFAULT_VOICES[0]["name"], DEFAULT_VOICES[0]["name"]
+    if provider == "xtts" and not config.GENERATION_XTTS_ENABLED:
         provider, selected_voice, voice_id = "edge", DEFAULT_VOICES[0]["name"], DEFAULT_VOICES[0]["name"]
     if provider == "edge" and importlib.util.find_spec("edge_tts") is None:
         project = update_project(
@@ -101,9 +109,11 @@ def generate_voice_for_project(project_id: str, voice: str, rate: str = "+0%", p
     )
     try:
         if provider == "openai":
-            words, words_source = _openai_tts_save(narration_text, voice_id, rate, audio_path)
+            words, words_source = _openai_tts_save(narration_text, voice_id, rate, audio_path, language)
         elif provider == "elevenlabs":
             words, words_source = _elevenlabs_tts_save(narration_text, voice_id, audio_path)
+        elif provider == "xtts":
+            words, words_source = _xtts_tts_save(narration_text, language, audio_path, voice_id)
         else:
             words, words_source = asyncio.run(_edge_tts_save(narration_text, selected_voice, rate, pitch, audio_path))
     except Exception as premium_error:
@@ -261,7 +271,7 @@ def ensure_voice_words(project: dict[str, Any]) -> dict[str, Any]:
     )
     # Prefer real per-word timings (Whisper) so captions stay locked to the voice;
     # only fall back to an approximate timeline if alignment is unavailable.
-    aligned = align_words_with_whisper(Path(audio_raw))
+    aligned = align_words_with_whisper(Path(audio_raw), _xtts_lang(str(project.get("language") or "")))
     words = aligned or _approximate_words(tokens, duration)
     words_source = "openai_whisper" if aligned else "approximate"
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -368,14 +378,24 @@ def _safe_positive_float(value: Any) -> float | None:
     return parsed if parsed > 0 else None
 
 
+_FOLLOW_RE = re.compile(r"me segue|segue o canal|segue a[íi]|se inscre|inscreva|follow|subscribe", re.IGNORECASE)
+
+
+def _has_follow(text: str) -> bool:
+    return bool(_FOLLOW_RE.search(str(text or "")))
+
+
 def narration_text_for_project(project: dict[str, Any]) -> str:
     parts: list[str] = []
     if project.get("hook"):
         parts.append(str(project.get("hook") or ""))
     for line in project.get("script_lines") or []:
         parts.append(str(line or ""))
-    if project.get("cta"):
-        parts.append(str(project.get("cta") or ""))
+    # Drop the separate CTA when the script already calls to follow, so the
+    # "me segue" / "follow" doesn't get spoken twice.
+    cta = str(project.get("cta") or "")
+    if cta and not (_has_follow(cta) and any(_has_follow(p) for p in parts)):
+        parts.append(cta)
     cleaned = [_clean_tts_text(part) for part in parts if _clean_tts_text(part)]
     return _flowing_narration(cleaned)
 
@@ -487,19 +507,165 @@ def _clean_tts_text(value: str) -> str:
 
 def _valid_voice(voice: str) -> bool:
     v = str(voice or "")
-    if v.startswith("openai:") or v.startswith("elevenlabs:") or v.startswith("11labs:"):
-        return True  # allow custom OpenAI/ElevenLabs voice ids beyond the presets
+    if v.startswith(("openai:", "elevenlabs:", "11labs:", "xtts:", "local:")):
+        return True  # allow custom OpenAI/ElevenLabs/local voice ids beyond the presets
     return any(item["name"] == voice for item in DEFAULT_VOICES)
 
 
 def _voice_provider(voice: str) -> tuple[str, str]:
-    """('edge'|'openai'|'elevenlabs', voice_id)."""
+    """('edge'|'openai'|'elevenlabs'|'xtts', voice_id)."""
     v = str(voice or "")
     if v.startswith("openai:"):
         return "openai", v.split(":", 1)[1]
     if v.startswith("elevenlabs:") or v.startswith("11labs:"):
         return "elevenlabs", v.split(":", 1)[1]
+    if v.startswith("xtts:") or v.startswith("local:"):
+        return "xtts", v.split(":", 1)[1]
     return "edge", v
+
+
+def _xtts_lang(language: str) -> str:
+    """Map a project language (pt-BR/en-US/...) to an XTTS language code."""
+    code = str(language or "pt").strip().lower().replace("_", "-")
+    return code.split("-", 1)[0] or "pt"
+
+
+def _ffmpeg_bin() -> str | None:
+    import shutil
+
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+_SPEECH_ABBREV = [
+    (re.compile(r"\bd\.\s*C\.?", re.IGNORECASE), "depois de Cristo"),
+    (re.compile(r"\ba\.\s*C\.?", re.IGNORECASE), "antes de Cristo"),
+    (re.compile(r"\bs[ée]c\.\s*", re.IGNORECASE), "século "),
+    (re.compile(r"\bDra\."), "Doutora"),
+    (re.compile(r"\bDr\."), "Doutor"),
+    (re.compile(r"\bSra\."), "Senhora"),
+    (re.compile(r"\bSr\."), "Senhor"),
+    (re.compile(r"\betc\.?", re.IGNORECASE), "etcétera"),
+    (re.compile(r"\bn[ºo°]\.?\s*", re.IGNORECASE), "número "),
+    (re.compile(r"\bkm²"), "quilômetros quadrados"),
+    (re.compile(r"\bkm\b"), "quilômetros"),
+]
+
+
+def _normalize_for_speech(text: str, language: str = "pt-BR") -> str:
+    """Make raw text speakable: expand abbreviations (a.C., séc., %, ...) and numbers
+    to words so the TTS never reads a stray period ('ponto') or spells digits out.
+    Portuguese-focused; numbers expanded only for pt languages."""
+    t = str(text or "")
+    for pattern, repl in _SPEECH_ABBREV:
+        t = pattern.sub(repl, t)
+    t = t.replace("%", " por cento")
+    t = t.replace("…", ", ").replace("...", ", ")
+
+    lang = str(language or "pt").lower()
+    if lang.startswith("pt"):
+        try:
+            from num2words import num2words
+
+            def _repl(match: "re.Match[str]") -> str:
+                raw = match.group(0).replace(".", "")
+                try:
+                    return num2words(int(raw), lang="pt")
+                except (ValueError, Exception):  # noqa: BLE001
+                    return match.group(0)
+
+            t = re.sub(r"\d{1,3}(?:\.\d{3})+|\d+", _repl, t)
+        except Exception:  # noqa: BLE001 - num2words missing -> leave digits
+            pass
+
+    # Keep sentence punctuation (. ! ?) so the synth can split into sentences and
+    # add real pauses; the synth strips the trailing '.' per sentence so XTTS never
+    # vocalizes 'ponto'.
+    t = re.sub(r"\s+", " ", t)
+    t = re.sub(r"\s+([,.;:!?])", r"\1", t)
+    return t.strip()
+
+
+def _xtts_ref_for(voice_id: str, language: str = "") -> Path:
+    """Resolve the cloned-voice reference for an xtts voice id, preferring a
+    LANGUAGE-SPECIFIC recording when present. Lookup order:
+      persona/voz_ref_<id>_<lang>.wav  (e.g. voz_ref_marco_en.wav — native accent)
+      persona/voz_ref_<id>.wav
+      default (Marco / GENERATION_XTTS_REF)."""
+    default = Path(config.GENERATION_XTTS_REF)
+    base = default.parent
+    name = re.sub(r"[^a-z0-9_]+", "", str(voice_id or "").lower())
+    lang = re.sub(r"[^a-z]+", "", str(language or "").lower())[:2]
+    if name and lang:
+        candidate = base / f"voz_ref_{name}_{lang}.wav"
+        if candidate.exists():
+            return candidate
+    if name:
+        candidate = base / f"voz_ref_{name}.wav"
+        if candidate.exists():
+            return candidate
+    return default
+
+
+def _xtts_tts_save(
+    text: str, language: str, audio_path: Path, voice_id: str = "marco"
+) -> tuple[list[dict[str, Any]], str]:
+    """Synthesize with a local XTTS cloned voice (per-studio) via the isolated
+    tts_test venv (subprocess), then convert WAV -> MP3. The reference is chosen by
+    voice_id. No native word timings (caller aligns with Whisper)."""
+    import subprocess
+
+    text = _normalize_for_speech(text, language)
+    python_exe = Path(config.GENERATION_XTTS_PYTHON)
+    script = Path(config.GENERATION_XTTS_SCRIPT)
+    ref = _xtts_ref_for(voice_id, language)
+    for needed, label in ((python_exe, "python"), (script, "script"), (ref, "referência")):
+        if not needed.exists():
+            raise RuntimeError(f"xtts_missing_{label}:{needed}")
+
+    wav_out = audio_path.with_suffix(".xtts.wav")
+    text_file = audio_path.with_suffix(".xtts.txt")
+    text_file.write_text(text, encoding="utf-8")
+    cmd = [
+        str(python_exe), str(script),
+        "--text-file", str(text_file),
+        "--lang", _xtts_lang(language),
+        "--ref", str(ref),
+        "--out", str(wav_out),
+        "--speed", str(config.GENERATION_XTTS_SPEED),
+        "--temperature", str(config.GENERATION_XTTS_TEMPERATURE),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0 or not wav_out.exists():
+        raise RuntimeError(f"xtts_failed:{(result.stderr or '')[-300:]}")
+
+    ffmpeg = _ffmpeg_bin()
+    if not ffmpeg:
+        raise RuntimeError("xtts_no_ffmpeg")
+    conv_cmd = [ffmpeg, "-y", "-i", str(wav_out)]
+    if config.GENERATION_XTTS_CLEAN_AUDIO and config.GENERATION_XTTS_CLEAN_FILTER:
+        # Denoise leve + presença (treble) + normalização: fundo limpo sem abafar.
+        conv_cmd += ["-af", config.GENERATION_XTTS_CLEAN_FILTER]
+    conv_cmd += ["-c:a", "libmp3lame", "-b:a", "192k", str(audio_path)]
+    conv = subprocess.run(conv_cmd, capture_output=True, text=True, timeout=120)
+    try:
+        wav_out.unlink()
+        text_file.unlink()
+    except OSError:
+        pass
+    if conv.returncode != 0 or not audio_path.exists():
+        raise RuntimeError("xtts_mp3_convert_failed")
+    # XTTS gives no word timings; transcribe the result with Whisper so captions
+    # lock to the speech (real per-word timestamps). Falls back to approximate.
+    words = align_words_with_whisper(audio_path, _xtts_lang(language))
+    return (words, "xtts_whisper") if words else ([], "xtts")
 
 
 def _rate_to_speed(rate: str) -> float:
@@ -508,7 +674,7 @@ def _rate_to_speed(rate: str) -> float:
     return max(0.7, min(1.3, round(1.0 + pct / 100.0, 2)))
 
 
-def _openai_tts_save(text: str, voice: str, rate: str, audio_path: Path) -> tuple[list[dict[str, Any]], str]:
+def _openai_tts_save(text: str, voice: str, rate: str, audio_path: Path, language: str = "") -> tuple[list[dict[str, Any]], str]:
     """OpenAI TTS (realistic). The TTS API returns no word timings, so we transcribe
     the generated audio with Whisper to get real word-level timestamps and keep the
     subtitles locked to the speech. Falls back to approximate timing if alignment is
@@ -528,15 +694,16 @@ def _openai_tts_save(text: str, voice: str, rate: str, audio_path: Path) -> tupl
     if not audio_bytes:
         raise RuntimeError("openai_tts_empty_audio")
     audio_path.write_bytes(audio_bytes)
-    words = align_words_with_whisper(audio_path)
+    words = align_words_with_whisper(audio_path, _xtts_lang(language))
     return (words, "openai_whisper") if words else ([], "openai")
 
 
-def align_words_with_whisper(audio_path: Path) -> list[dict[str, Any]]:
+def align_words_with_whisper(audio_path: Path, language: str = "") -> list[dict[str, Any]]:
     """Transcribe audio with OpenAI Whisper, returning real per-word timings
-    ``[{text,start,end}]``. Used to sync captions to TTS that has no native
-    timestamps (OpenAI TTS). Returns ``[]`` on any failure so callers can fall
-    back to approximate timing — never raises."""
+    ``[{text,start,end}]``. Passing ``language`` (e.g. 'en'/'pt') forces Whisper to
+    transcribe in that language — important because a cloned PT voice speaking English
+    can otherwise be auto-detected as Portuguese, producing a wrong-language caption.
+    Returns ``[]`` on any failure so callers can fall back — never raises."""
     if not config.GENERATION_ALIGN_CAPTIONS or not config.OPENAI_API_KEY:
         return []
     if not audio_path.exists():
@@ -545,13 +712,16 @@ def align_words_with_whisper(audio_path: Path) -> list[dict[str, Any]]:
         from openai import OpenAI
 
         client = OpenAI(api_key=config.OPENAI_API_KEY)
+        kwargs: dict[str, Any] = {
+            "model": config.GENERATION_OPENAI_TRANSCRIBE_MODEL,
+            "response_format": "verbose_json",
+            "timestamp_granularities": ["word"],
+        }
+        code = str(language or "").strip().lower()[:2]
+        if code:
+            kwargs["language"] = code
         with audio_path.open("rb") as audio_file:
-            result = client.audio.transcriptions.create(
-                model=config.GENERATION_OPENAI_TRANSCRIBE_MODEL,
-                file=audio_file,
-                response_format="verbose_json",
-                timestamp_granularities=["word"],
-            )
+            result = client.audio.transcriptions.create(file=audio_file, **kwargs)
     except Exception:  # noqa: BLE001 - alignment is best-effort
         return []
 

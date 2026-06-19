@@ -84,7 +84,14 @@ GENERATION_ENABLE_AI_IMAGE_FALLBACK = (
 GENERATION_OPENAI_IMAGE_MODEL = os.getenv("GENERATION_OPENAI_IMAGE_MODEL", "gpt-image-1-mini").strip()
 GENERATION_IMAGE_QUALITY = os.getenv("GENERATION_IMAGE_QUALITY", "low").strip().lower()
 GENERATION_IMAGE_SIZE = os.getenv("GENERATION_IMAGE_SIZE", "1024x1536").strip()
-GENERATION_MAX_AI_IMAGES_PER_VIDEO = int(os.getenv("GENERATION_MAX_AI_IMAGES_PER_VIDEO", "20"))
+# Runware (Flux) — gerador de imagem PRINCIPAL (mais barato que o OpenAI). OpenAI
+# vira só último recurso. Modelo padrão: FLUX.1 Schnell (runware:100@1).
+RUNWARE_API_KEY = os.getenv("RUNWARE_API_KEY", "").strip()
+GENERATION_RUNWARE_ENABLED = (
+    os.getenv("GENERATION_RUNWARE_ENABLED", "true").lower() == "true"
+)
+GENERATION_RUNWARE_MODEL = os.getenv("GENERATION_RUNWARE_MODEL", "runware:100@1").strip()
+GENERATION_MAX_AI_IMAGES_PER_VIDEO = int(os.getenv("GENERATION_MAX_AI_IMAGES_PER_VIDEO", "24"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GENERATION_REQUIRE_EXTERNAL_AI = (
     os.getenv("GENERATION_REQUIRE_EXTERNAL_AI", "false").lower() == "true"
@@ -147,6 +154,40 @@ GENERATION_ALIGN_CAPTIONS = (
 )
 GENERATION_OPENAI_TRANSCRIBE_MODEL = os.getenv(
     "GENERATION_OPENAI_TRANSCRIBE_MODEL", "whisper-1"
+).strip()
+# Local XTTS voice (cloned "Marco" voice on the user's GPU). The backend shells out
+# to the isolated tts_test venv so heavy TTS deps never touch the backend env.
+# Selected by a voice named "xtts:<id>" (or "local:<id>").
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+GENERATION_XTTS_ENABLED = (
+    os.getenv("GENERATION_XTTS_ENABLED", "true").lower() == "true"
+)
+GENERATION_XTTS_PYTHON = os.getenv(
+    "GENERATION_XTTS_PYTHON", str(_PROJECT_ROOT / "tts_test" / ".venv" / "Scripts" / "python.exe")
+).strip()
+GENERATION_XTTS_SCRIPT = os.getenv(
+    "GENERATION_XTTS_SCRIPT", str(_PROJECT_ROOT / "tts_test" / "xtts_synth.py")
+).strip()
+GENERATION_XTTS_REF = os.getenv(
+    "GENERATION_XTTS_REF",
+    str(Path(__file__).resolve().parent / "storage" / "generation" / "persona" / "voz_ref_clean.wav"),
+).strip()
+GENERATION_XTTS_SPEED = float(os.getenv("GENERATION_XTTS_SPEED", "1.15"))
+GENERATION_XTTS_TEMPERATURE = float(os.getenv("GENERATION_XTTS_TEMPERATURE", "0.75"))
+# Voz padrão para vídeos NÃO-português (ex.: canal em inglês). A voz clonada é
+# treinada em pt; pra inglês nativo usamos uma voz pronta (OpenAI TTS). Cada estúdio
+# pode sobrescrever via persona["voice_en"].
+GENERATION_ENGLISH_VOICE = os.getenv("GENERATION_ENGLISH_VOICE", "openai:onyx").strip()
+# Clean the generated voice (denoise background hiss/hum + normalize) so it sounds
+# less "robotic". Applied during the WAV->MP3 step.
+GENERATION_XTTS_CLEAN_AUDIO = (
+    os.getenv("GENERATION_XTTS_CLEAN_AUDIO", "true").lower() == "true"
+)
+# Filtro ffmpeg de limpeza: denoise leve + realce de presença (treble) pra não
+# abafar. Ajustável via env sem mexer no código.
+GENERATION_XTTS_CLEAN_FILTER = os.getenv(
+    "GENERATION_XTTS_CLEAN_FILTER",
+    "highpass=f=70,afftdn=nr=6:nf=-25,treble=g=4:f=3500,loudnorm=I=-16:TP=-1.5:LRA=11",
 ).strip()
 # ElevenLabs (most human). Add the key to enable; multilingual model handles pt-BR.
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
@@ -248,8 +289,8 @@ GENERATION_DEFAULT_NARRATION_STYLE = os.getenv(
     "GENERATION_DEFAULT_NARRATION_STYLE", "conversational_story"
 ).strip()
 GENERATION_DEFAULT_VOICE_RATE = os.getenv("GENERATION_DEFAULT_VOICE_RATE", "-6%").strip()
-GENERATION_CAPTION_MIN_WORDS = int(os.getenv("GENERATION_CAPTION_MIN_WORDS", "3"))
-GENERATION_CAPTION_MAX_WORDS = int(os.getenv("GENERATION_CAPTION_MAX_WORDS", "6"))
+GENERATION_CAPTION_MIN_WORDS = int(os.getenv("GENERATION_CAPTION_MIN_WORDS", "2"))
+GENERATION_CAPTION_MAX_WORDS = int(os.getenv("GENERATION_CAPTION_MAX_WORDS", "4"))
 GENERATION_RENDER_DEBUG = os.getenv("GENERATION_RENDER_DEBUG", "true").lower() == "true"
 
 # Viral caption styling (burned-in ASS subtitles).
@@ -258,12 +299,27 @@ GENERATION_CAPTION_FONTSIZE = int(os.getenv("GENERATION_CAPTION_FONTSIZE", "92")
 GENERATION_CAPTION_UPPERCASE = (
     os.getenv("GENERATION_CAPTION_UPPERCASE", "true").lower() == "true"
 )
+# Animated word-by-word captions: highlight the spoken word (viral TikTok style).
+# Needs per-word timings (Whisper). Color is ASS format &HBBGGRR& — default cyan
+# (0x38D9FF -> &HFFD938&).
+GENERATION_CAPTION_HIGHLIGHT = (
+    os.getenv("GENERATION_CAPTION_HIGHLIGHT", "true").lower() == "true"
+)
+GENERATION_CAPTION_HIGHLIGHT_COLOR = os.getenv(
+    "GENERATION_CAPTION_HIGHLIGHT_COLOR", "&HFFD938&"
+).strip()
+# Break a caption block when there's a real pause in the speech (gap between words
+# >= this many seconds) — keeps phrases together instead of cutting mid-expression.
+GENERATION_CAPTION_PAUSE_GAP = float(os.getenv("GENERATION_CAPTION_PAUSE_GAP", "0.28"))
 
 # Background music: mixed low under the narration. Drop tracks in the music dir.
 GENERATION_ENABLE_BG_MUSIC = (
     os.getenv("GENERATION_ENABLE_BG_MUSIC", "true").lower() == "true"
 )
-GENERATION_BG_MUSIC_VOLUME = float(os.getenv("GENERATION_BG_MUSIC_VOLUME", "0.06"))
+GENERATION_BG_MUSIC_VOLUME = float(os.getenv("GENERATION_BG_MUSIC_VOLUME", "0.10"))
+# Loudness do áudio final do vídeo (LUFS). -14 é o padrão "alto" de TikTok/YouTube
+# — garante que o vídeo não saia baixo no feed.
+GENERATION_AUDIO_LOUDNORM_I = os.getenv("GENERATION_AUDIO_LOUDNORM_I", "-14").strip()
 
 # Ken Burns: slow zoom on still images so the video looks edited (not a slideshow).
 # Videos/b-roll already move and are left untouched. Zoom amount is the fraction of
@@ -272,6 +328,19 @@ GENERATION_ENABLE_KEN_BURNS = (
     os.getenv("GENERATION_ENABLE_KEN_BURNS", "true").lower() == "true"
 )
 GENERATION_KENBURNS_ZOOM = float(os.getenv("GENERATION_KENBURNS_ZOOM", "0.12"))
+
+# Persona branding: drop a square photo at storage/generation/persona/avatar.png.
+# INTRO = a quick full-frame flash of the persona at the very start (over the hook
+# audio, so it never adds dead air). WATERMARK = a small circular face "bug" in the
+# corner for the whole video. Both make the channel look authored/recognizable.
+GENERATION_PERSONA_INTRO = (
+    os.getenv("GENERATION_PERSONA_INTRO", "false").lower() == "true"
+)
+GENERATION_PERSONA_INTRO_SECONDS = float(os.getenv("GENERATION_PERSONA_INTRO_SECONDS", "1.2"))
+GENERATION_PERSONA_WATERMARK = (
+    os.getenv("GENERATION_PERSONA_WATERMARK", "false").lower() == "true"
+)
+GENERATION_PERSONA_WATERMARK_SIZE = int(os.getenv("GENERATION_PERSONA_WATERMARK_SIZE", "140"))
 
 DEFAULT_BR_FEEDS = [
     "https://g1.globo.com/rss/g1/",

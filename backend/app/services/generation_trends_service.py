@@ -25,11 +25,15 @@ _MAX_TOPICS = 12
 
 
 def trending_topics(
-    language: str = "pt-BR", limit: int = 10, refresh: bool = False
+    niche: str = "história e curiosidades",
+    language: str = "pt-BR",
+    limit: int = 10,
+    refresh: bool = False,
 ) -> dict[str, Any]:
-    """Top trending história/curiosidades topics. Returns {topics, source, cached}."""
+    """Top trending topics FOR A GIVEN NICHE. Returns {topics, source, cached}."""
     limit = max(1, min(int(limit or 10), _MAX_TOPICS))
-    key = (language or "pt-BR").strip().lower()
+    niche = (niche or "história e curiosidades").strip() or "história e curiosidades"
+    key = f"{niche}|{language or 'pt-BR'}".strip().lower()
     now = time.time()
 
     if not refresh:
@@ -37,7 +41,7 @@ def trending_topics(
         if cached and (now - cached[0]) < _CACHE_TTL_SECONDS:
             return {"topics": cached[1][:limit], "source": "cache", "cached": True}
 
-    topics, source = _fetch(language, _MAX_TOPICS)
+    topics, source = _fetch(niche, language, _MAX_TOPICS)
     if not topics:
         topics, source = _fallback(language), "fallback"
     if topics:
@@ -45,11 +49,11 @@ def trending_topics(
     return {"topics": topics[:limit], "source": source, "cached": False}
 
 
-def _fetch(language: str, limit: int) -> tuple[list[dict[str, str]], str]:
+def _fetch(niche: str, language: str, limit: int) -> tuple[list[dict[str, str]], str]:
     """Try web search first (real hype), then a plain LLM call. Never raises."""
     if _active_provider() != "openai":
         return [], "none"
-    prompt = _prompt(language, limit)
+    prompt = _prompt(niche, language, limit)
     provider = _make_provider("openai")
 
     if config.GENERATION_OPENAI_USE_WEB_SEARCH:
@@ -71,29 +75,47 @@ def _fetch(language: str, limit: int) -> tuple[list[dict[str, str]], str]:
     return [], "none"
 
 
-def _prompt(language: str, limit: int) -> str:
+def _prompt(niche: str, language: str, limit: int) -> str:
     return (
-        f"Liste os {limit} temas de HISTÓRIA e CURIOSIDADES que estão MAIS em alta AGORA — "
+        f"Liste os {limit} temas de {niche.upper()} que estão MAIS em alta AGORA — "
         f"os mais pesquisados e mais assistidos no YouTube e no TikTok. "
         f"Escreva tudo no idioma {language}. "
-        "Priorize temas com forte potencial viral para vídeos verticais curtos (Shorts/Reels): "
-        "fatos chocantes, mistérios, 'você sabia', histórias pouco conhecidas. "
+        "Priorize temas POPULARES e de ALTO VOLUME de busca — assuntos que o GRANDE PÚBLICO "
+        "reconhece, com forte potencial viral em Shorts/Reels (fatos chocantes, 'você sabia', "
+        "reviravoltas). PREFIRA O FAMOSO AO OBSCURO: nada que quase ninguém conhece. "
+        "\n\nFATOS REAIS: use SOMENTE fatos verídicos e bem documentados. NÃO invente fatos, "
+        "personagens, datas nem curiosidades duvidosas — se não tem certeza de que é real E "
+        "conhecido, NÃO inclua. EVITE mitos já desmentidos (ex.: 'Napoleão era baixo', "
+        "'Einstein reprovou em matemática', 'usamos só 10% do cérebro') — só fatos confirmados. "
+        f"\n\nNICHO: apenas {niche}. NÃO sugira nada sobre o próprio YouTube, TikTok, Instagram, "
+        "redes sociais, internet ou 'canais virais'. "
         "\n\nREGRA MAIS IMPORTANTE — SEJA ESPECÍFICO E NOMEADO: cada tema DEVE citar um "
-        "personagem, evento, lugar ou fato CONCRETO e com nome próprio. NUNCA entregue "
-        "categorias, listas ou temas guarda-chuva. "
-        "RUIM (proibido): 'Fatos bizarros da antiguidade', 'Personagens históricos omitidos', "
-        "'Mistérios não resolvidos', 'Curiosidades sobre o Egito', 'Top 5 imperadores'. "
-        "BOM (faça assim): 'Calígula nomeou seu cavalo Incitatus como senador', "
-        "'Hiroo Onoda se escondeu na selva por 29 anos após a guerra', "
-        "'A maldição de Tutancâmon matou quem abriu a tumba', "
-        "'Cleópatra falava 9 idiomas e era uma gênia da política'. "
-        "Cada title deve ser uma frase com um SUJEITO NOMEADO específico, pronta para virar um vídeo sozinha. "
-        "Varie os personagens/épocas — não repita o mesmo personagem. "
+        "personagem, evento, lugar, conceito ou fato CONCRETO e específico. NUNCA entregue "
+        "categorias ou temas guarda-chuva. "
+        "RUIM (proibido): 'Curiosidades sobre o espaço', 'Fatos de psicologia', 'Mitos famosos'. "
+        "BOM (faça assim, no estilo certo para o nicho): "
+        "'Por que o tempo passa mais devagar perto de um buraco negro', "
+        "'O efeito Dunning-Kruger: por que os incompetentes se acham geniais', "
+        "'Como Cronos devorou os próprios filhos na mitologia grega', "
+        "'Calígula nomeou seu cavalo senador'. "
+        "Cada title deve ser uma frase específica, pronta para virar um vídeo sozinha. Varie os assuntos. "
         "\n\nResponda APENAS com um array JSON, sem texto antes ou depois, com objetos no formato: "
         '{"title": "...", "hook": "...", "why": "..."} '
-        "onde title é o tema específico e nomeado, hook é uma primeira frase que prende em 2 segundos, "
+        "onde title é o tema específico, hook é uma primeira frase que prende em 2 segundos, "
         "e why explica em uma frase curta por que está em alta."
     )
+
+
+# Off-niche terms (meta/social) that occasionally leak from the web search.
+_BLOCKLIST = (
+    "youtube", "tiktok", "instagram", "shorts", "reels", "rede social",
+    "redes sociais", "podcast", "influenciador", "viral no ",
+)
+
+
+def _off_niche(title: str) -> bool:
+    low = title.lower()
+    return any(term in low for term in _BLOCKLIST)
 
 
 def _parse(text: str) -> list[dict[str, str]]:
@@ -115,6 +137,8 @@ def _parse(text: str) -> list[dict[str, str]]:
         title = str(item.get("title") or item.get("tema") or item.get("topic") or "").strip()
         if not title:
             continue
+        if _off_niche(title):
+            continue  # drop meta/social topics that aren't history
         out.append(
             {
                 "title": title[:120],

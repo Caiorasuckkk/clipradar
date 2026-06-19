@@ -76,6 +76,13 @@ def start_auto_generation(
     resolved_tone = (p.get("tone") if p else "") or tone or "curioso"
     resolved_style = (narrative_style or "").strip() or (p.get("narrative_style") if p else "")
     resolved_voice = (voice or "").strip() or (p.get("voice") if p else "")
+    # Non-PT videos (e.g. English channel) use a native-language narration voice
+    # (the cloned voice is PT-trained). Studio can override via persona["voice_en"];
+    # falls back to GENERATION_ENGLISH_VOICE. Only when the user didn't pick a voice.
+    if language.strip().lower()[:2] != "pt" and not (voice or "").strip():
+        en_voice = (p.get("voice_en") if p else "") or config.GENERATION_ENGLISH_VOICE
+        if en_voice:
+            resolved_voice = en_voice
     resolved_speed = speed if (speed and speed != "normal") else (p.get("speed") if p else speed)
     scriptwriter = p.get("scriptwriter") if p else ""
     music_mood = p.get("music_mood") if p else ""

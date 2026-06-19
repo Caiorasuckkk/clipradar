@@ -692,11 +692,19 @@ def _cues_from_captions(project: dict[str, Any]) -> list[dict[str, Any]]:
     cues = payload.get("captions") if isinstance(payload, dict) else None
     if not isinstance(cues, list):
         return []
-    return [
-        {"start": float(c.get("start") or 0), "end": float(c.get("end") or 0), "text": str(c.get("text") or "")}
-        for c in cues
-        if isinstance(c, dict) and c.get("text")
-    ]
+    out: list[dict[str, Any]] = []
+    for c in cues:
+        if not isinstance(c, dict) or not c.get("text"):
+            continue
+        entry = {
+            "start": float(c.get("start") or 0),
+            "end": float(c.get("end") or 0),
+            "text": str(c.get("text") or ""),
+        }
+        if isinstance(c.get("words"), list) and c["words"]:
+            entry["words"] = c["words"]
+        out.append(entry)
+    return out
 
 
 def _cues_from_words(project: dict[str, Any]) -> list[dict[str, Any]]:
@@ -774,16 +782,67 @@ def _write_ass(path: Path, cues: list[dict[str, Any]]) -> None:
         "[Events]",
         "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
     ]
+    highlight = config.GENERATION_CAPTION_HIGHLIGHT
+    hl_color = config.GENERATION_CAPTION_HIGHLIGHT_COLOR or "&HFFD938&"
     body = []
     for cue in cues:
-        text = str(cue["text"])
-        if upper:
-            text = text.upper()
-        body.append(
-            "Dialogue: 0,"
-            f"{_ass_time(cue['start'])},{_ass_time(cue['end'])},Default,,0,0,0,,{_ass_escape(text)}"
-        )
+        words = cue.get("words") if isinstance(cue.get("words"), list) else None
+        if highlight and words and len(words) > 1:
+            body.extend(_ass_word_events(words, float(cue["start"]), float(cue["end"]), upper, hl_color))
+        else:
+            text = str(cue["text"])
+            if upper:
+                text = text.upper()
+            body.append(
+                "Dialogue: 0,"
+                f"{_ass_time(cue['start'])},{_ass_time(cue['end'])},Default,,0,0,0,,{_ass_escape(text)}"
+            )
     path.write_text("\n".join(header + body), encoding="utf-8")
+
+
+def _ass_word_events(
+    words: list[dict[str, Any]], cue_start: float, cue_end: float, upper: bool, hl_color: str
+) -> list[str]:
+    """One Dialogue per word: the whole line is shown white and the spoken word is
+    highlighted (cyan) for its time window — the viral word-by-word caption look.
+    Times are clamped inside [cue_start, cue_end] and kept monotonic so captions
+    never overlap or jump position."""
+    events: list[str] = []
+    tokens = [str(w.get("text") or "").strip() for w in words]
+    if upper:
+        tokens = [t.upper() for t in tokens]
+    prev_end = cue_start
+    for i, w in enumerate(words):
+        try:
+            start = max(cue_start, float(w["start"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        start = max(start, prev_end)  # monotonic — no overlap with previous word
+        # span until the next word starts (no gaps), last word until the cue end
+        if i + 1 < len(words):
+            try:
+                end = float(words[i + 1]["start"])
+            except (KeyError, TypeError, ValueError):
+                end = float(w.get("end") or start + 0.2)
+        else:
+            end = cue_end
+        end = min(end, cue_end)
+        if end <= start:
+            end = min(start + 0.12, cue_end)
+        prev_end = end
+        parts = []
+        for j, tok in enumerate(tokens):
+            esc = _ass_escape(tok)
+            if j == i:
+                parts.append(f"{{\\c{hl_color}}}{esc}{{\\c&HFFFFFF&}}")
+            else:
+                parts.append(esc)
+        line = " ".join(parts)
+        events.append(
+            "Dialogue: 0,"
+            f"{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{line}"
+        )
+    return events
 
 
 # ---------------------------------------------------------------------------
@@ -840,28 +899,51 @@ def _assemble_command(
     music: Path | None,
 ) -> list[str]:
     has_ass = bool(ass_path and ass_path.exists())
+    do_intro = config.GENERATION_PERSONA_INTRO
+    do_wm = config.GENERATION_PERSONA_WATERMARK
+    avatar = _persona_avatar() if (do_intro or do_wm) else None
+    do_intro = do_intro and avatar is not None
+    do_wm = do_wm and avatar is not None
+
     command = [
         _ffmpeg(), "-y",
         "-f", "concat", "-safe", "0", "-i", str(list_path),
         "-i", str(audio_path),
     ]
+    next_index = 2
+    music_index = None
     if music is not None:
         # Loop the track so it covers the whole video; trimmed by -t below.
         command += ["-stream_loop", "-1", "-i", str(music)]
+        music_index = next_index
+        next_index += 1
+    avatar_index = None
+    if avatar is not None:
+        command += ["-i", str(avatar)]
+        avatar_index = next_index
+        next_index += 1
+
+    parts: list[str] = []
+    ln = f"loudnorm=I={config.GENERATION_AUDIO_LOUDNORM_I}:TP=-1.5:LRA=11"
+    if music is not None:
         vol = max(0.0, float(config.GENERATION_BG_MUSIC_VOLUME))
-        audio_chain = (
-            f"[1:a]volume=1.0[a1];[2:a]volume={vol}[a2];"
-            "[a1][a2]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[a]"
+        parts.append(
+            f"[1:a]volume=1.0[a1];[{music_index}:a]volume={vol}[a2];"
+            "[a1][a2]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[amx];"
+            f"[amx]{ln}[a]"
         )
-        if has_ass:
-            filter_complex = f"[0:v]ass='{_filter_path(ass_path)}'[v];{audio_chain}"
-            command += ["-filter_complex", filter_complex, "-map", "[v]", "-map", "[a]"]
-        else:
-            command += ["-filter_complex", audio_chain, "-map", "0:v:0", "-map", "[a]"]
     else:
-        if has_ass:
-            command += ["-vf", f"ass='{_filter_path(ass_path)}'"]
-        command += ["-map", "0:v:0", "-map", "1:a:0"]
+        # No music: still normalize the voice to the target loudness.
+        parts.append(f"[1:a]{ln}[a]")
+    audio_map = "[a]"
+
+    video_graph, video_label = _persona_video_graph(has_ass, ass_path, avatar_index, do_intro, do_wm)
+    if video_graph:
+        parts.append(video_graph)
+
+    if parts:
+        command += ["-filter_complex", ";".join(parts)]
+    command += ["-map", ("0:v:0" if video_label == "[0:v]" else video_label), "-map", audio_map]
     command += [
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "160k", "-r", f"{FPS}",
@@ -869,6 +951,55 @@ def _assemble_command(
         str(output_path),
     ]
     return command
+
+
+def _persona_avatar() -> Path | None:
+    base = config.STORAGE_GENERATION_DIR / "persona"
+    for name in ("avatar.png", "avatar.jpg", "avatar.jpeg", "avatar.webp"):
+        candidate = base / name
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def _persona_video_graph(
+    has_ass: bool, ass_path: Path | None, avatar_index: int | None, do_intro: bool, do_wm: bool
+) -> tuple[str, str]:
+    """Build the video filtergraph for the persona branding (intro flash + circular
+    watermark) plus the burned-in captions. Returns ``(graph, out_label)``. The
+    graph starts from ``[0:v]``; ``out_label`` is what to -map (``[0:v]`` if nothing
+    was applied). Captions go on TOP so they stay readable over the intro/bug."""
+    steps: list[str] = []
+    cur = "[0:v]"
+    if avatar_index is not None and (do_intro or do_wm):
+        av = f"[{avatar_index}:v]"
+        if do_intro and do_wm:
+            steps.append(f"{av}split=2[pin][pwm0]")
+            intro_src, wm_src = "[pin]", "[pwm0]"
+        else:
+            intro_src = wm_src = av
+        if do_intro:
+            sec = max(0.3, float(config.GENERATION_PERSONA_INTRO_SECONDS))
+            steps.append(
+                f"{intro_src}scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
+                f"crop={WIDTH}:{HEIGHT},setsar=1[pintrof]"
+            )
+            steps.append(f"{cur}[pintrof]overlay=0:0:enable='lt(t,{sec})'[vpin]")
+            cur = "[vpin]"
+        if do_wm:
+            wm = max(48, int(config.GENERATION_PERSONA_WATERMARK_SIZE))
+            r = wm // 2
+            margin = 40
+            steps.append(
+                f"{wm_src}scale={wm}:{wm},format=rgba,"
+                f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='255*lte(hypot(X-{r},Y-{r}),{r})'[pwmc]"
+            )
+            steps.append(f"{cur}[pwmc]overlay=W-w-{margin}:H-h-{margin}[vpwm]")
+            cur = "[vpwm]"
+    if has_ass:
+        steps.append(f"{cur}ass='{_filter_path(ass_path)}'[v]")
+        cur = "[v]"
+    return ";".join(steps), cur
 
 
 # Mood folders the owner fills with royalty-free tracks. The video's niche/tone
@@ -897,14 +1028,47 @@ _TONE_MOOD = {
 }
 
 
-def _select_music(project_id: str | None) -> Path | None:
-    """Pick a royalty-free track by mood (niche/tone), varied per project.
+# Music folder per STUDIO/THEME — drop tracks in music/<theme>/.
+_PERSONA_MUSIC_FOLDER = {
+    "historico": "historia",
+    "terror": "terror",
+    "ciencia": "ciencia",
+    "mitologia": "mitologia",
+    "psicologia": "psicologia",
+}
 
-    Looks in ``music/<mood>/`` first; falls back to any track anywhere under the
-    music dir. Returns None when no track exists (narration-only render).
+
+def _music_folder_for_project(project_id: str | None) -> str:
+    """Folder name for the project's THEME (studio). Empty if unknown."""
+    project = get_project(str(project_id or "")) or {}
+    persona = _normalize_ascii(str(project.get("persona") or ""))
+    if persona in _PERSONA_MUSIC_FOLDER:
+        return _PERSONA_MUSIC_FOLDER[persona]
+    blob = _normalize_ascii(f"{project.get('niche') or ''} {project.get('persona_label') or ''}")
+    if "terror" in blob:
+        return "terror"
+    if "ciencia" in blob or "espaco" in blob:
+        return "ciencia"
+    if "mitolog" in blob:
+        return "mitologia"
+    if "psico" in blob:
+        return "psicologia"
+    if "histor" in blob or "curiosid" in blob:
+        return "historia"
+    return ""
+
+
+def _select_music(project_id: str | None) -> Path | None:
+    """Pick a royalty-free track for the project's THEME, varied per project.
+
+    Looks in ``music/<theme>/`` (historia, terror, ciencia, ...) first; falls back
+    to the legacy ``music/<mood>/`` folder, then any track anywhere under the music
+    dir. Returns None when no track exists (narration-only render).
     """
-    mood = _mood_for_project(project_id)
-    tracks = _list_tracks(MUSIC_DIR / mood)
+    folder = _music_folder_for_project(project_id)
+    tracks = _list_tracks(MUSIC_DIR / folder) if folder else []
+    if not tracks:  # legacy mood folders (dramatico/animado/calmo/tenso)
+        tracks = _list_tracks(MUSIC_DIR / _mood_for_project(project_id))
     if not tracks:
         tracks = _list_tracks(MUSIC_DIR, recursive=True)
     if not tracks:

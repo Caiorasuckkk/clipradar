@@ -33,6 +33,7 @@ from app.services.generation_autopilot_service import (
 )
 from app.services.generation_personas import list_personas
 from app.services.generation_trends_service import trending_topics
+from app.services.generation_publish_service import publish_package
 from app.services.generation_performance_service import (
     mark_posted,
     performance_summary,
@@ -381,10 +382,13 @@ def get_generation_personas() -> dict[str, Any]:
 
 @router.get("/trends")
 def get_generation_trends(
-    language: str = "pt-BR", limit: int = 10, refresh: bool = False
+    niche: str = "história e curiosidades",
+    language: str = "pt-BR",
+    limit: int = 10,
+    refresh: bool = False,
 ) -> dict[str, Any]:
-    """Top trending história/curiosidades topics (YouTube/TikTok) to seed themes."""
-    return trending_topics(language=language, limit=limit, refresh=refresh)
+    """Top trending topics for a studio's NICHE (YouTube/TikTok) to seed themes."""
+    return trending_topics(niche=niche, language=language, limit=limit, refresh=refresh)
 
 
 class GenerationPostedPayload(BaseModel):
@@ -417,6 +421,15 @@ def post_generation_project_posted(
     if not project:
         raise HTTPException(status_code=404, detail="generation_project_not_found")
     return project
+
+
+@router.get("/projects/{project_id}/publish")
+def get_generation_project_publish(project_id: str, refresh: bool = False) -> dict[str, Any]:
+    """Publish pack (titles, description, hashtags, best times) in the video's language."""
+    pack = publish_package(project_id, refresh=refresh)
+    if pack is None:
+        raise HTTPException(status_code=404, detail="generation_project_not_found")
+    return pack
 
 
 @router.post("/projects/{project_id}/metrics/refresh")

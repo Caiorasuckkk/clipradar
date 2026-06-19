@@ -894,6 +894,19 @@ def _narrative_plan_prompt(
     )
 
 
+_SCRIPT_LANG_NAMES = {
+    "pt": "português (Brasil)",
+    "en": "inglês (English)",
+    "es": "espanhol (español)",
+}
+
+
+def _lang_name(language: str) -> str:
+    return _SCRIPT_LANG_NAMES.get(
+        str(language or "").strip().lower()[:2], str(language or "português")
+    )
+
+
 def _script_prompt(
     research_brief: dict[str, Any],
     narrative_plan: dict[str, Any],
@@ -930,9 +943,12 @@ def _script_prompt(
             "linguagem genérica; escreva narração fluida com tensão e uma virada clara.\n"
             f"Crítica a corrigir: {str(critique).strip()}"
         )
+    lang_name = _lang_name(language)
     return (
+        f"IDIOMA OBRIGATÓRIO: escreva TODO o roteiro — title, hook, script_lines, cta e hashtags — "
+        f"em {lang_name}. NÃO escreva em nenhum outro idioma. Esta regra vale acima de tudo.\n"
         f"{persona_block}"
-        "LINGUAGEM (regra principal): escreva para o grande público, em português simples e "
+        f"LINGUAGEM (regra principal): escreva para o grande público, em {lang_name} simples e "
         "popular, como se explicasse para um amigo na conversa. Frases curtas (no máximo ~14 "
         "palavras), uma ideia por frase. PROIBIDO jargão, termos acadêmicos ou rebuscados; se um "
         "termo for inevitável, explique em palavras do dia a dia. Evite palavras como 'helenística', "
@@ -1025,22 +1041,87 @@ def generate_ai_image(
     quality: str | None = None,
     provider_override: str = "auto",
 ) -> bytes | None:
-    """Generate a last-resort image (PNG bytes) for a scene. None if disabled,
-    unavailable, or on error. Only the OpenAI provider supports image gen here."""
+    """Generate an image (PNG bytes) for a scene. Tries Runware (Flux) FIRST because
+    it's much cheaper; OpenAI is the last resort. None if disabled/unavailable/error."""
     if not config.GENERATION_ENABLE_AI_IMAGE_FALLBACK:
         return None
-    if not str(prompt or "").strip():
+    prompt = str(prompt or "").strip()
+    if not prompt:
         return None
-    if _active_provider(provider_override) != "openai" or not _openai_ready():
+    size = size or config.GENERATION_IMAGE_SIZE
+
+    # 1) Runware (Flux) — principal (mais barato).
+    img = generate_runware_image(prompt, size)
+    if img:
+        return img
+
+    # 2) OpenAI — último recurso.
+    if _openai_ready():
+        try:
+            return OpenAIProvider().generate_image(
+                prompt=prompt[:900],
+                size=size,
+                quality=quality or config.GENERATION_IMAGE_QUALITY,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def _parse_size(size: str) -> tuple[int, int]:
+    try:
+        w, h = str(size or "").lower().split("x", 1)
+        return int(w), int(h)
+    except (ValueError, AttributeError):
+        return 1024, 1536
+
+
+def generate_runware_image(prompt: str, size: str | None = None) -> bytes | None:
+    """Generate one image via the Runware API (Flux). Returns PNG bytes or None
+    (disabled / no key / error). Never raises."""
+    if not config.GENERATION_RUNWARE_ENABLED or not config.RUNWARE_API_KEY:
+        return None
+    prompt = str(prompt or "").strip()
+    if not prompt:
         return None
     try:
-        return OpenAIProvider().generate_image(
-            prompt=str(prompt).strip()[:900],
-            size=size or config.GENERATION_IMAGE_SIZE,
-            quality=quality or config.GENERATION_IMAGE_QUALITY,
+        import uuid
+
+        import requests
+
+        width, height = _parse_size(size or config.GENERATION_IMAGE_SIZE)
+        payload = [
+            {
+                "taskType": "imageInference",
+                "taskUUID": str(uuid.uuid4()),
+                "positivePrompt": prompt[:1500],
+                "width": width,
+                "height": height,
+                "model": config.GENERATION_RUNWARE_MODEL,
+                "numberResults": 1,
+                "outputType": "base64Data",
+                "outputFormat": "PNG",
+            }
+        ]
+        response = requests.post(
+            "https://api.runware.ai/v1",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {config.RUNWARE_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=120,
         )
-    except Exception:
+        response.raise_for_status()
+        data = response.json()
+        items = data.get("data") if isinstance(data, dict) else None
+        for item in items or []:
+            b64 = item.get("imageBase64Data") if isinstance(item, dict) else None
+            if b64:
+                return base64.b64decode(b64)
+    except Exception:  # noqa: BLE001 - best-effort; falls back to OpenAI
         return None
+    return None
 
 
 def _visual_queries_prompt(
@@ -1109,8 +1190,14 @@ def _visual_queries_prompt(
         "kind='specific' nesse caso. Se a cena for só clima/ação genérica (sem pessoa/lugar real "
         "definido), deixe subject vazio e kind='generic'. As 'queries' continuam SEMPRE genéricas "
         "(sem nomes próprios) para o banco de stock.\n"
+        "FIDELIDADE À LINHA (regra forte): cada 'scene' deve ilustrar o CONTEÚDO ESPECÍFICO "
+        "daquela linha de narração — a ação, o objeto, a pessoa ou o momento EXATO que a frase "
+        "descreve — e não uma cena genérica do tema. Se a linha fala de uma batalha, mostre a "
+        "batalha; se fala de uma carta, mostre a carta; se fala de uma fuga, mostre a fuga. Cada "
+        "linha vira uma cena DIFERENTE e concreta. Descreva sujeito + ação + cenário + época.\n"
         "Responda SOMENTE com um JSON array, um objeto por linha, NA MESMA ORDEM, com as chaves: "
-        "order (int, 1-based), scene (descrição curta em inglês da cena ideal), subject (assunto real "
+        "order (int, 1-based), scene (descrição em inglês de 8 a 18 palavras, CONCRETA e específica "
+        "do que ESSA linha narra: sujeito + ação + cenário + época), subject (assunto real "
         "em inglês ou vazio), kind ('specific' ou 'generic'), queries (lista de 2 a 3 buscas curtas "
         "em inglês, genéricas, sem nomes próprios), type ('broll' para vídeo ou 'image' para foto). "
         "Para temas históricos/biográficos, prefira kind='specific' com um subject forte.\n"
