@@ -19,7 +19,7 @@ from app.services.generation_llm_provider_service import (
 
 # language -> (fetched_at, topics)
 _CACHE: dict[str, tuple[float, list[dict[str, str]]]] = {}
-_CACHE_TTL_SECONDS = 60 * 60 * 6  # 6h
+_CACHE_TTL_SECONDS = 60 * 60 * 24  # 24h — trends move slowly; refresh button forces it
 
 _MAX_TOPICS = 12
 
@@ -58,7 +58,7 @@ def _fetch(niche: str, language: str, limit: int) -> tuple[list[dict[str, str]],
 
     if config.GENERATION_OPENAI_USE_WEB_SEARCH:
         try:
-            text = provider._web_search(config.GENERATION_OPENAI_RESEARCH_MODEL, prompt)
+            text = provider._web_search(config.GENERATION_OPENAI_SEARCH_MODEL, prompt)
             topics = _parse(text)
             if topics:
                 return topics, "web_search"

@@ -39,3 +39,11 @@ backend/app/storage/videos/*
 backend/app/storage/darkflow.db
 backend/app/storage/darkflow.db-wal
 backend/app/storage/darkflow.db-shm
+
+# Voice/TTS scratch: local venv + test audio (~6 GB) — never commit.
+tts_test/
+# Local editor/tooling config.
+.claude/
+.obsidian/
+# Apple App Store Connect API key — never commit.
+*.p8

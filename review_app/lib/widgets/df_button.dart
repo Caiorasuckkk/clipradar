@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+
 class DfButton extends StatelessWidget {
   const DfButton({
     super.key,
@@ -16,23 +18,67 @@ class DfButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final child = Text(label, maxLines: 1, overflow: TextOverflow.ellipsis);
     if (filled) {
-      return SizedBox(
-        height: 48,
-        child: FilledButton.icon(
-          onPressed: onPressed,
-          icon: Icon(icon),
-          label: child,
+      final enabled = onPressed != null;
+      return Opacity(
+        opacity: enabled ? 1 : 0.45,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.cyan, AppColors.blue],
+            ),
+            boxShadow: enabled
+                ? [
+                    BoxShadow(
+                      color: AppColors.cyan.withValues(alpha: 0.30),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(14),
+              child: SizedBox(
+                height: 50,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(icon, color: AppColors.background, size: 20),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.background,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       );
     }
     return SizedBox(
-      height: 48,
+      height: 50,
       child: OutlinedButton.icon(
         onPressed: onPressed,
-        icon: Icon(icon),
-        label: child,
+        icon: Icon(icon, size: 20),
+        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     );
   }

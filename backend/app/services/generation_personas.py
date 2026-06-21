@@ -42,8 +42,21 @@ PERSONAS: list[dict[str, Any]] = [
             "Escreva SEMPRE no mesmo idioma do vídeo — o nome 'Marco' se mantém igual em "
             "qualquer idioma. Use linguagem simples, popular e direta. Nada de aula chata."
         ),
-        "voice": "xtts:marco",
-        "voice_en": "openai:onyx",
+        # Fable (OpenAI) for BOTH languages — expressive narrator. Steered to a warm,
+        # human, charismatic "cool teacher" tone via `tts_instructions` (the 'v2' recipe).
+        "voice": "openai:fable",
+        "voice_en": "openai:fable",
+        "tts_instructions": (
+            "Speak like a REAL person having a relaxed, spontaneous conversation — NOT "
+            "reading a script and not like a polished announcer. Sound natural, warm and "
+            "human: use casual, everyday inflections, gentle rises and falls in pitch, "
+            "small natural pauses and soft breaths, and subtle variations in pace and "
+            "energy, as if the thoughts are forming in the moment. Friendly 'cool "
+            "teacher' charisma with a light smile in the voice and a touch of playful "
+            "curiosity. Let it feel a little imperfect and alive — slightly informal, "
+            "never flat, robotic, stiff or monotone. Intimate and conversational, like "
+            "telling a fascinating secret to a friend across the table."
+        ),
         "speed": "normal",
         "music_mood": "dramatico",
         "visual_style": "historically accurate, period, realistic, cinematic",
@@ -79,8 +92,19 @@ PERSONAS: list[dict[str, Any]] = [
             "admiração, nunca monótono. Escreva SEMPRE no mesmo idioma do vídeo; o nome 'Carlos' se "
             "mantém igual em qualquer idioma. Use linguagem simples e popular, nada de aula chata."
         ),
-        "voice": "xtts:carlos",
-        "voice_en": "openai:onyx",
+        # Ash (OpenAI) for BOTH languages — clear, warm. Steered to a wonder/awe
+        # science-communicator tone via `tts_instructions`.
+        "voice": "openai:ash",
+        "voice_en": "openai:ash",
+        "tts_instructions": (
+            "Speak as a passionate science communicator filled with genuine wonder and "
+            "awe at the cosmos — curious, warm and captivating, the kind of voice that "
+            "makes you look up at the sky differently. Clear and intelligent, but never "
+            "dry or academic. Build with rising fascination, then drop into a hushed, "
+            "almost reverent awe on the mind-blowing reveal, letting the scale sink in "
+            "with a meaningful pause. Excited but grounded, like sharing an astonishing "
+            "secret about the universe with a friend. Never monotone, never robotic."
+        ),
         "speed": "normal",
         "music_mood": "dramatico",
         "visual_style": (
@@ -118,8 +142,20 @@ PERSONAS: list[dict[str, Any]] = [
             "idioma do vídeo; o nome 'Atlas' se mantém igual em qualquer idioma. Use linguagem simples "
             "e popular, nada de aula chata."
         ),
-        "voice": "xtts:atlas",
+        # Onyx (OpenAI) for BOTH languages, steered to a wise, ancient-sage epic tone
+        # via `tts_instructions` (the validated mythology "v2" recipe).
+        "voice": "openai:onyx",
         "voice_en": "openai:onyx",
+        "tts_instructions": (
+            "Speak as a profoundly wise, ancient sage — a venerable elder who has witnessed "
+            "the rise and fall of entire civilizations. Deep, warm, resonant aged voice, calm "
+            "and serene, radiating timeless wisdom and quiet, effortless authority. EXTREMELY "
+            "slow, measured and contemplative pace, with long, thoughtful pauses, as if each "
+            "word is chosen with great care and meaning. Gentle yet profound, like a grandfather "
+            "imparting sacred knowledge by the fire. Unhurried, reflective and reverent — the "
+            "serene voice of someone at peace with all the ages he has seen. Never rushed, never "
+            "theatrical, never cheerful; only deep, knowing calm."
+        ),
         "speed": "normal",
         "music_mood": "dramatico",
         "visual_style": (
@@ -158,8 +194,22 @@ PERSONAS: list[dict[str, Any]] = [
             "idioma do vídeo; o nome 'Clara' se mantém igual em qualquer idioma. Use linguagem simples "
             "e popular, nada de aula chata."
         ),
-        "voice": "xtts:clara",
-        "voice_en": "openai:nova",
+        # Coral (OpenAI) for BOTH languages — warm, expressive female. Steered to a
+        # calm, empathetic confidante tone. `voice_fx: normalize` raises the loudness
+        # (the soft empathetic delivery renders quiet otherwise).
+        "voice": "openai:coral",
+        "voice_en": "openai:coral",
+        "tts_instructions": (
+            "Speak as a clearly FEMININE woman — a calm, warm and comforting presence, "
+            "a gentle, insightful confidante who makes the listener feel understood and "
+            "safe. A soft-spoken female voice in a natural, light, higher register; "
+            "soothing, tender and reassuring, like a caring friend or kind therapist "
+            "speaking softly to you. Unhurried, reflective and serene, with gentle "
+            "pauses that give the listener space to feel seen. IMPORTANT: the voice must "
+            "sound distinctly feminine — never deep, never masculine, never clinical, "
+            "cold, flat or robotic. Warm, nurturing and intimate throughout."
+        ),
+        "voice_fx": "normalize",
         "speed": "normal",
         "music_mood": "calmo",
         "visual_style": (
@@ -201,7 +251,22 @@ PERSONAS: list[dict[str, Any]] = [
             "vídeo; o nome 'Vincent' se mantém igual em qualquer idioma. Use linguagem simples e "
             "popular, nada de aula chata."
         ),
-        "voice": "xtts:atlas",
+        # Onyx (OpenAI) for BOTH languages — multilingual, stable. The horror tone
+        # comes from `tts_instructions` (steered via gpt-4o-mini-tts) and the
+        # `voice_fx` hoarse/raspy post-processing (the validated "v3" recipe).
+        "voice": "openai:onyx",
+        "voice_en": "openai:onyx",
+        "tts_instructions": (
+            "Speak as a sinister, decayed horror creature narrator. EXTREMELY hoarse, "
+            "raspy, gravelly and rough — a broken, scratchy, throaty voice, as if the "
+            "vocal cords are damaged and the throat is bone dry. Heavy, guttural, "
+            "creaking rasp on every word. Very deep and low. Speak slowly and "
+            "menacingly, dropping into a coarse, breathy, growling whisper at the tense "
+            "moments. Long, unsettling pauses with a slow, creeping build of dread. "
+            "Macabre, rotten and threatening, like something that should not be speaking. "
+            "Never cheerful, never warm, never smooth."
+        ),
+        "voice_fx": "horror_rasp",
         "speed": "lento",
         "music_mood": "tenso",
         "visual_style": (

@@ -330,6 +330,9 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "auto_status": _clean(payload.get("auto_status")),
         "auto_job_id": _clean(payload.get("auto_job_id")),
         "auto_error": _clean(payload.get("auto_error")),
+        # Bilingual "generate once": clone projects point back to their base project.
+        "bilingual_parent": _clean(payload.get("bilingual_parent")),
+        "bilingual_base_language": _clean(payload.get("bilingual_base_language")),
         "persona": _clean(payload.get("persona")),
         "persona_label": _clean(payload.get("persona_label")),
         "scriptwriter": _clean_multiline(payload.get("scriptwriter")),

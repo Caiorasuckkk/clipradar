@@ -927,8 +927,11 @@ def _assemble_command(
     ln = f"loudnorm=I={config.GENERATION_AUDIO_LOUDNORM_I}:TP=-1.5:LRA=11"
     if music is not None:
         vol = max(0.0, float(config.GENERATION_BG_MUSIC_VOLUME))
+        # silenceremove drops any quiet intro on the track so the music is audible
+        # from t=0 (starts together with the video), not a few seconds in.
         parts.append(
-            f"[1:a]volume=1.0[a1];[{music_index}:a]volume={vol}[a2];"
+            f"[1:a]volume=1.0[a1];"
+            f"[{music_index}:a]silenceremove=start_periods=1:start_threshold=-50dB,volume={vol}[a2];"
             "[a1][a2]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[amx];"
             f"[amx]{ln}[a]"
         )

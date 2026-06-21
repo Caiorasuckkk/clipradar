@@ -18,12 +18,21 @@ class DFGradientCard extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            AppColors.blue.withValues(alpha: 0.34),
-            AppColors.purple.withValues(alpha: 0.24),
+            AppColors.cyan.withValues(alpha: 0.28),
+            AppColors.blue.withValues(alpha: 0.30),
+            AppColors.purple.withValues(alpha: 0.22),
             AppColors.surface,
           ],
+          stops: const [0.0, 0.4, 0.7, 1.0],
         ),
-        border: Border.all(color: AppColors.cyan.withValues(alpha: 0.22)),
+        border: Border.all(color: AppColors.cyan.withValues(alpha: 0.24)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.blue.withValues(alpha: 0.22),
+            blurRadius: 28,
+            offset: const Offset(0, 14),
+          ),
+        ],
       ),
       child: child,
     );

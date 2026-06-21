@@ -19,7 +19,7 @@ import 'app_config.dart';
 
 class ApiClient {
   ApiClient({http.Client? client, this.baseUrl = AppConfig.apiBaseUrl})
-    : _client = client ?? http.Client();
+    : _client = client ?? _AuthClient(http.Client());
 
   final http.Client _client;
   final String baseUrl;
@@ -28,19 +28,29 @@ class ApiClient {
     return Uri.parse('$baseUrl$path').replace(queryParameters: query);
   }
 
-  String exportUrl(String filename) => '$baseUrl/exports/$filename';
+  // Media URLs are opened directly by the video player / Image.network /
+  // url_launcher, which don't go through _client — so the token rides as a
+  // query param. No-op when the token is empty (local dev).
+  String _withToken(String url) {
+    if (AppConfig.apiToken.isEmpty) return url;
+    final sep = url.contains('?') ? '&' : '?';
+    return '$url${sep}token=${Uri.encodeComponent(AppConfig.apiToken)}';
+  }
 
-  String finalExportUrl(String filename) => '$baseUrl/final_exports/$filename';
+  String exportUrl(String filename) => _withToken('$baseUrl/exports/$filename');
+
+  String finalExportUrl(String filename) =>
+      _withToken('$baseUrl/final_exports/$filename');
   String candidatePreviewUrl(String filename) =>
-      '$baseUrl/candidate_previews/$filename';
+      _withToken('$baseUrl/candidate_previews/$filename');
   String postingPackageVideoUrl(String filename) =>
-      '$baseUrl/posting_package/latest/videos/$filename';
+      _withToken('$baseUrl/posting_package/latest/videos/$filename');
   String generationVoiceAudioUrl(String projectId) =>
-      '$baseUrl/generation/projects/$projectId/voice/audio';
+      _withToken('$baseUrl/generation/projects/$projectId/voice/audio');
   String generationRenderVideoUrl(String projectId) =>
-      '$baseUrl/generation/projects/$projectId/render/video';
+      _withToken('$baseUrl/generation/projects/$projectId/render/video');
   String generationRenderThumbnailUrl(String projectId) =>
-      '$baseUrl/generation/projects/$projectId/render/thumbnail';
+      _withToken('$baseUrl/generation/projects/$projectId/render/thumbnail');
 
   Future<List<ReviewClip>> fetchClips({String status = 'all'}) async {
     final response = await _client.get(
@@ -845,12 +855,14 @@ class ApiClient {
 
   /// Top trending história/curiosidades topics (YouTube/TikTok) to seed themes.
   Future<List<GenerationTrend>> fetchTrendingTopics({
+    String niche = 'história e curiosidades',
     String language = 'pt-BR',
     int limit = 10,
     bool refresh = false,
   }) async {
     final response = await _client
         .get(_uri('/generation/trends', {
+          'niche': niche,
           'language': language,
           'limit': '$limit',
           'refresh': refresh ? 'true' : 'false',
@@ -861,6 +873,17 @@ class ApiClient {
     return (payload['topics'] as List<dynamic>? ?? [])
         .map((item) => GenerationTrend.fromJson(item as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Publish pack (titles, description, hashtags, best times) in the video's language.
+  Future<PublishPack> fetchGenerationPublishPack(String projectId,
+      {bool refresh = false}) async {
+    final response = await _client
+        .get(_uri('/generation/projects/$projectId/publish',
+            {'refresh': refresh ? 'true' : 'false'}))
+        .timeout(const Duration(seconds: 45));
+    _throwIfBad(response);
+    return PublishPack.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   /// One theme -> one auto video per language (e.g. pt-BR + en-US for 2 channels).
@@ -1278,6 +1301,7 @@ class GenerationPersona {
     required this.icon,
     required this.accent,
     required this.voice,
+    required this.niche,
   });
 
   final String id;
@@ -1286,6 +1310,7 @@ class GenerationPersona {
   final String icon;
   final String accent;
   final String voice;
+  final String niche;
 
   factory GenerationPersona.fromJson(Map<String, dynamic> json) {
     return GenerationPersona(
@@ -1295,6 +1320,7 @@ class GenerationPersona {
       icon: json['icon']?.toString() ?? '',
       accent: json['accent']?.toString() ?? '',
       voice: json['voice']?.toString() ?? '',
+      niche: json['niche']?.toString() ?? '',
     );
   }
 }
@@ -1341,6 +1367,37 @@ class GenerationAutoStartItem {
       projectId: json['project_id']?.toString() ?? '',
       jobId: json['job_id']?.toString() ?? '',
       error: json['error']?.toString() ?? '',
+    );
+  }
+}
+
+/// Copy-paste publish pack for one video (one language).
+class PublishPack {
+  const PublishPack({
+    required this.titles,
+    required this.description,
+    required this.hashtags,
+    required this.bestTimes,
+    required this.language,
+  });
+
+  final List<String> titles;
+  final String description;
+  final List<String> hashtags;
+  final String bestTimes;
+  final String language;
+
+  factory PublishPack.fromJson(Map<String, dynamic> json) {
+    return PublishPack(
+      titles: (json['titles'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .toList(),
+      description: json['description']?.toString() ?? '',
+      hashtags: (json['hashtags'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .toList(),
+      bestTimes: json['best_times']?.toString() ?? '',
+      language: json['language']?.toString() ?? '',
     );
   }
 }
@@ -1436,4 +1493,24 @@ class ApiException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// Wraps an http.Client to attach the shared API token header on every request,
+/// so a publicly-exposed backend (tunnel/cloud) rejects unauthorized callers.
+/// No-op when AppConfig.apiToken is empty (local dev).
+class _AuthClient extends http.BaseClient {
+  _AuthClient(this._inner);
+
+  final http.Client _inner;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    if (AppConfig.apiToken.isNotEmpty) {
+      request.headers['X-API-Token'] = AppConfig.apiToken;
+    }
+    return _inner.send(request);
+  }
+
+  @override
+  void close() => _inner.close();
 }

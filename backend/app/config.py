@@ -58,6 +58,10 @@ WHISPER_FORCE_PT_CHANNELS = (
 )
 MAX_VIDEOS_PER_RUN = int(os.getenv("MAX_VIDEOS_PER_RUN", "5"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+# Optional shared secret protecting the API when exposed publicly (tunnel/cloud).
+# When empty the API stays open (local dev). When set, requests must send it via
+# the `X-API-Token` header or a `token` query param.
+API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "").strip()
 GENERATION_ENGINE = os.getenv("GENERATION_ENGINE", "local").strip().lower()
 GENERATION_AI_PROVIDER = os.getenv("GENERATION_AI_PROVIDER", "none").strip().lower()
 # OpenAI provider (alternative to Gemini). Smart split: strong model on
@@ -67,6 +71,12 @@ GENERATION_AI_PROVIDER = os.getenv("GENERATION_AI_PROVIDER", "none").strip().low
 GENERATION_OPENAI_RESEARCH_MODEL = os.getenv("GENERATION_OPENAI_RESEARCH_MODEL", "gpt-5.4").strip()
 GENERATION_OPENAI_SCRIPT_MODEL = os.getenv("GENERATION_OPENAI_SCRIPT_MODEL", "gpt-5.4").strip()
 GENERATION_OPENAI_CHEAP_MODEL = os.getenv("GENERATION_OPENAI_CHEAP_MODEL", "gpt-5.4-mini").strip()
+# Web search / factual research just GATHERS facts (the facts come from the search
+# results, not the model's reasoning) — so it runs on the cheap model by default to
+# slash cost. The strong SCRIPT model still does the writing, where quality lives.
+GENERATION_OPENAI_SEARCH_MODEL = os.getenv(
+    "GENERATION_OPENAI_SEARCH_MODEL", GENERATION_OPENAI_CHEAP_MODEL
+).strip()
 # Judge is evaluative (not writing) — defaults to the cheap model to save tokens.
 GENERATION_OPENAI_JUDGE_MODEL = os.getenv(
     "GENERATION_OPENAI_JUDGE_MODEL", GENERATION_OPENAI_CHEAP_MODEL
@@ -173,7 +183,7 @@ GENERATION_XTTS_REF = os.getenv(
     str(Path(__file__).resolve().parent / "storage" / "generation" / "persona" / "voz_ref_clean.wav"),
 ).strip()
 GENERATION_XTTS_SPEED = float(os.getenv("GENERATION_XTTS_SPEED", "1.15"))
-GENERATION_XTTS_TEMPERATURE = float(os.getenv("GENERATION_XTTS_TEMPERATURE", "0.75"))
+GENERATION_XTTS_TEMPERATURE = float(os.getenv("GENERATION_XTTS_TEMPERATURE", "0.92"))
 # Voz padrão para vídeos NÃO-português (ex.: canal em inglês). A voz clonada é
 # treinada em pt; pra inglês nativo usamos uma voz pronta (OpenAI TTS). Cada estúdio
 # pode sobrescrever via persona["voice_en"].

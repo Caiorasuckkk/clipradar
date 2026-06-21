@@ -13,6 +13,7 @@ import requests
 
 from app import config
 from app.services.generation_workspace_service import get_project, update_project
+from app.services.generation_personas import get_persona
 from app.services import generation_narration_service as narration
 from app.services import generation_caption_service as captions
 
@@ -75,6 +76,12 @@ def generate_voice_for_project(project_id: str, voice: str, rate: str = "+0%", p
     selected_voice = voice if _valid_voice(voice) else DEFAULT_VOICES[0]["name"]
     provider, voice_id = _voice_provider(selected_voice)
     language = str(project.get("language") or "pt-BR")
+    # Studio-driven voice styling: a persona may steer the OpenAI TTS tone
+    # (`tts_instructions`) and request a post-processing effect (`voice_fx`),
+    # e.g. the Terror studio's hoarse/raspy horror voice.
+    persona_obj = get_persona(str(project.get("persona") or "")) or {}
+    tts_instructions = str(persona_obj.get("tts_instructions") or "")
+    voice_fx = str(persona_obj.get("voice_fx") or "")
     if provider == "openai" and not config.OPENAI_API_KEY:
         provider, selected_voice, voice_id = "edge", DEFAULT_VOICES[0]["name"], DEFAULT_VOICES[0]["name"]
     if provider == "elevenlabs" and not config.ELEVENLABS_API_KEY:
@@ -109,7 +116,10 @@ def generate_voice_for_project(project_id: str, voice: str, rate: str = "+0%", p
     )
     try:
         if provider == "openai":
-            words, words_source = _openai_tts_save(narration_text, voice_id, rate, audio_path, language)
+            words, words_source = _openai_tts_save(
+                narration_text, voice_id, rate, audio_path, language,
+                instructions=tts_instructions, fx=voice_fx,
+            )
         elif provider == "elevenlabs":
             words, words_source = _elevenlabs_tts_save(narration_text, voice_id, audio_path)
         elif provider == "xtts":
@@ -553,10 +563,69 @@ _SPEECH_ABBREV = [
     (re.compile(r"\bSra\."), "Senhora"),
     (re.compile(r"\bSr\."), "Senhor"),
     (re.compile(r"\betc\.?", re.IGNORECASE), "etcétera"),
-    (re.compile(r"\bn[ºo°]\.?\s*", re.IGNORECASE), "número "),
+    (re.compile(r"\bn[º°]\.?\s*"), "número "),
     (re.compile(r"\bkm²"), "quilômetros quadrados"),
     (re.compile(r"\bkm\b"), "quilômetros"),
 ]
+
+
+def _num2words_pt(n: int, to: str = "cardinal") -> str:
+    """Number -> Portuguese (Brazil) words. Falls back to European pt, then digits."""
+    try:
+        from num2words import num2words
+    except Exception:  # noqa: BLE001
+        return str(n)
+    for code in ("pt_BR", "pt"):
+        try:
+            # num2words puts commas in big numbers ("mil, oitocentos") which the TTS
+            # reads as a pause mid-number — strip them so the number flows.
+            return num2words(n, lang=code, to=to).replace(",", "")
+        except Exception:  # noqa: BLE001
+            continue
+    return str(n)
+
+
+def _roman_to_int(s: str) -> int | None:
+    vals = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+    s = s.upper()
+    total, prev = 0, 0
+    for ch in reversed(s):
+        if ch not in vals:
+            return None
+        v = vals[ch]
+        total += -v if v < prev else v
+        prev = max(prev, v)
+    return total or None
+
+
+def _int_to_roman(n: int) -> str:
+    table = [(1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"),
+             (90, "XC"), (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"),
+             (4, "IV"), (1, "I")]
+    out = ""
+    for val, sym in table:
+        while n >= val:
+            out += sym
+            n -= val
+    return out
+
+
+def _roman_words(token: str) -> str | None:
+    """Roman numeral -> Portuguese cardinal words, only if it's a canonical roman."""
+    n = _roman_to_int(token)
+    if not n or _int_to_roman(n) != token.upper():
+        return None
+    return _num2words_pt(n)
+
+
+def _ordinal_pt(num_str: str, feminine: bool) -> str:
+    try:
+        w = _num2words_pt(int(num_str), to="ordinal")
+    except (ValueError, TypeError):
+        return num_str
+    if feminine:
+        w = " ".join(p[:-1] + "a" if p.endswith("o") else p for p in w.split())
+    return w
 
 
 def _normalize_for_speech(text: str, language: str = "pt-BR") -> str:
@@ -571,19 +640,23 @@ def _normalize_for_speech(text: str, language: str = "pt-BR") -> str:
 
     lang = str(language or "pt").lower()
     if lang.startswith("pt"):
-        try:
-            from num2words import num2words
+        # Century roman numerals: "século XIX" -> "século dezenove".
+        t = re.sub(
+            r"(s[ée]culo\s+)([ivxlcdmIVXLCDM]{1,6})\b",
+            lambda m: f"{m.group(1)}{_roman_words(m.group(2)) or m.group(2)}",
+            t,
+        )
+        # Ordinals: "1º" -> "primeiro", "2ª" -> "segunda".
+        t = re.sub(r"(\d+)\s*[º°]", lambda m: _ordinal_pt(m.group(1), False), t)
+        t = re.sub(r"(\d+)\s*ª", lambda m: _ordinal_pt(m.group(1), True), t)
+        def _repl(match: "re.Match[str]") -> str:
+            raw = match.group(0).replace(".", "")
+            try:
+                return _num2words_pt(int(raw))
+            except (ValueError, TypeError):
+                return match.group(0)
 
-            def _repl(match: "re.Match[str]") -> str:
-                raw = match.group(0).replace(".", "")
-                try:
-                    return num2words(int(raw), lang="pt")
-                except (ValueError, Exception):  # noqa: BLE001
-                    return match.group(0)
-
-            t = re.sub(r"\d{1,3}(?:\.\d{3})+|\d+", _repl, t)
-        except Exception:  # noqa: BLE001 - num2words missing -> leave digits
-            pass
+        t = re.sub(r"\d{1,3}(?:\.\d{3})+|\d+", _repl, t)
 
     # Keep sentence punctuation (. ! ?) so the synth can split into sentences and
     # add real pauses; the synth strips the trailing '.' per sentence so XTTS never
@@ -674,18 +747,34 @@ def _rate_to_speed(rate: str) -> float:
     return max(0.7, min(1.3, round(1.0 + pct / 100.0, 2)))
 
 
-def _openai_tts_save(text: str, voice: str, rate: str, audio_path: Path, language: str = "") -> tuple[list[dict[str, Any]], str]:
+def _openai_tts_save(
+    text: str,
+    voice: str,
+    rate: str,
+    audio_path: Path,
+    language: str = "",
+    instructions: str = "",
+    fx: str = "",
+) -> tuple[list[dict[str, Any]], str]:
     """OpenAI TTS (realistic). The TTS API returns no word timings, so we transcribe
     the generated audio with Whisper to get real word-level timestamps and keep the
     subtitles locked to the speech. Falls back to approximate timing if alignment is
-    off or fails."""
+    off or fails.
+
+    ``instructions`` steers tone/style (e.g. a horror voice) and requires a steerable
+    model (gpt-4o-mini-tts), since tts-1/tts-1-hd ignore it. ``fx`` applies a named
+    post-processing effect to the rendered audio (e.g. ``horror_rasp``)."""
     from openai import OpenAI
 
     client = OpenAI(api_key=config.OPENAI_API_KEY)
+    # tts-1-hd ignores `instructions`; use the steerable model when a tone is set.
+    model = "gpt-4o-mini-tts" if instructions else config.GENERATION_OPENAI_TTS_MODEL
     kwargs: dict[str, Any] = {
-        "model": config.GENERATION_OPENAI_TTS_MODEL, "voice": voice,
+        "model": model, "voice": voice,
         "input": text, "response_format": "mp3",
     }
+    if instructions:
+        kwargs["instructions"] = instructions
     try:
         resp = client.audio.speech.create(speed=_rate_to_speed(rate), **kwargs)
     except Exception:
@@ -694,8 +783,55 @@ def _openai_tts_save(text: str, voice: str, rate: str, audio_path: Path, languag
     if not audio_bytes:
         raise RuntimeError("openai_tts_empty_audio")
     audio_path.write_bytes(audio_bytes)
+    # Apply the studio effect (duration-preserving) before alignment so captions
+    # stay locked to the final audio.
+    if fx:
+        _apply_voice_fx(audio_path, fx)
     words = align_words_with_whisper(audio_path, _xtts_lang(language))
     return (words, "openai_whisper") if words else ([], "openai")
+
+
+_VOICE_FX_FILTERS = {
+    # Hoarse, raspy horror voice (the validated 'v3' recipe): deepen pitch ~6%
+    # (asetrate 24000*0.94 + atempo restores duration) and add harmonic grit.
+    "horror_rasp": (
+        "asetrate=22560,aresample=24000,atempo=1.0638,"
+        "acompressor=threshold=-16dB:ratio=4:attack=5:release=150,"
+        "aexciter=amount=5:blend=4,alimiter=limit=0.95"
+    ),
+    # Loudness normalization (EBU R128) to a social-video target — fixes soft,
+    # quiet deliveries (e.g. the empathetic Psicologia voice).
+    "normalize": "loudnorm=I=-14:TP=-1.5:LRA=11",
+}
+
+
+def _apply_voice_fx(audio_path: Path, fx: str) -> None:
+    """Apply a named, duration-preserving audio effect in place. Best-effort:
+    silently no-ops if ffmpeg or the filter is unavailable, so a video never
+    breaks over an effect."""
+    af = _VOICE_FX_FILTERS.get(fx)
+    if not af:
+        return
+    ffmpeg = _ffmpeg_bin()
+    if not ffmpeg or not audio_path.exists():
+        return
+    import subprocess
+    tmp = audio_path.with_suffix(".fx.mp3")
+    try:
+        completed = subprocess.run(
+            [ffmpeg, "-y", "-i", str(audio_path), "-af", af,
+             "-codec:a", "libmp3lame", "-b:a", "128k", str(tmp)],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+        if completed.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+            tmp.replace(audio_path)
+        else:
+            tmp.unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001 - effect is best-effort
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def align_words_with_whisper(audio_path: Path, language: str = "") -> list[dict[str, Any]]:

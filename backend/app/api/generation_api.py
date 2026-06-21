@@ -469,7 +469,11 @@ class GenerationAutoBatchPayload(BaseModel):
 
 @router.post("/auto/batch")
 def post_generation_auto_batch(payload: GenerationAutoBatchPayload) -> dict[str, Any]:
-    """One theme -> one auto video per language (e.g. pt-BR + en-US for 2 channels)."""
+    """One theme -> one auto video per language (e.g. pt-BR + en-US for 2 channels).
+
+    "Generate once": the FIRST language is fully generated (research + script +
+    visuals); the rest are produced by translating that script and REUSING the same
+    visuals — only narration + captions are redone. Big cost cut, identical visuals."""
     languages = [str(lang).strip() for lang in (payload.languages or []) if str(lang).strip()]
     if not languages:
         languages = ["pt-BR"]
@@ -477,22 +481,41 @@ def post_generation_auto_batch(payload: GenerationAutoBatchPayload) -> dict[str,
     seen: set[str] = set()
     languages = [lang for lang in languages if not (lang in seen or seen.add(lang))]
 
-    items: list[dict[str, Any]] = []
-    for language in languages:
-        try:
-            started = start_auto_generation(
-                theme=payload.theme,
-                persona=payload.persona,
-                language=language,
-                speed=payload.speed,
-                voice=payload.voice,
-            )
-            items.append({"language": language, **started})
-        except ValueError as error:
-            if not items:
-                raise HTTPException(status_code=400, detail=str(error)) from error
-            items.append({"language": language, "error": str(error)})
-    return {"items": items}
+    base_language, extra_languages = languages[0], languages[1:]
+    try:
+        started = start_auto_generation(
+            theme=payload.theme,
+            persona=payload.persona,
+            language=base_language,
+            speed=payload.speed,
+            voice=payload.voice,
+            also_languages=extra_languages,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    # One item per language, each with a real project_id the UI can poll. The base is
+    # generated fully; the clone placeholders sit "queued" until the base finishes.
+    items: list[dict[str, Any]] = [
+        {
+            "language": base_language,
+            "role": "base",
+            "project_id": started.get("project_id"),
+            "job_id": started.get("job_id"),
+            "auto_status": "queued",
+        }
+    ]
+    for clone in started.get("clones", []):
+        items.append(
+            {
+                "language": clone.get("language"),
+                "role": "clone",
+                "project_id": clone.get("project_id"),
+                "job_id": clone.get("job_id", ""),
+                "auto_status": "queued",
+            }
+        )
+    return {"items": items, "base_project_id": started.get("project_id")}
 
 
 @router.get("/projects/{project_id}/auto/status")

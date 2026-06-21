@@ -68,6 +68,69 @@ def get_provider_status() -> dict[str, Any]:
     }
 
 
+def _translate_prompt(fields: dict[str, Any], target_language: str, source_language: str) -> str:
+    src = f" (idioma original: {source_language})" if source_language else ""
+    return (
+        f"Traduza o conteúdo do JSON abaixo{src} para {target_language}. É o roteiro de um "
+        "vídeo curto narrado (Shorts/Reels). REGRAS: "
+        "(1) traduza de forma NATURAL, como um nativo escreveria — nada de tradução literal; "
+        "(2) preserve o mesmo significado, tom, emoção e força do gancho/CTA; "
+        "(3) preserve nomes próprios (pessoas, lugares, marcas); "
+        "(4) o array 'script_lines' DEVE ter EXATAMENTE o mesmo número de itens e na mesma ordem "
+        "(1 para 1 com o original); "
+        "(5) NÃO adicione, remova nem reordene linhas. "
+        "Responda APENAS com um JSON no MESMO formato (chaves: title, hook, script_lines, cta), "
+        "sem texto antes ou depois.\n\n"
+        + json.dumps(fields, ensure_ascii=False)
+    )
+
+
+def translate_script_fields(
+    fields: dict[str, Any],
+    target_language: str,
+    source_language: str = "",
+    provider_override: str = "auto",
+) -> dict[str, Any]:
+    """Translate the narration-bearing fields (title, hook, script_lines, cta) into
+    ``target_language`` with ONE cheap LLM call, preserving the script_lines array 1:1.
+
+    Used by the bilingual 'generate once' flow: the second language reuses the same
+    research + visuals and only re-narrates, so we never re-run research/script/judge.
+    On any failure returns the originals (degraded: untranslated)."""
+    base = {
+        "title": str(fields.get("title") or ""),
+        "hook": str(fields.get("hook") or ""),
+        "script_lines": [str(x) for x in (fields.get("script_lines") or [])],
+        "cta": str(fields.get("cta") or ""),
+    }
+    name = _active_provider(provider_override)
+    if name not in {"openai", "gemini"}:
+        return base
+    prompt = _translate_prompt(base, target_language, source_language)
+    try:
+        provider = _make_provider(name)
+        if name == "openai":
+            text = provider._chat(config.GENERATION_OPENAI_SEARCH_MODEL, prompt, json_object=True)
+        else:
+            text = provider._generate_content(config.GEMINI_SCRIPT_MODEL, prompt, use_grounding=False)
+        data = safe_json_parse(text)
+        if not isinstance(data, dict):
+            return base
+        out = dict(base)
+        for key in ("title", "hook", "cta"):
+            value = str(data.get(key) or "").strip()
+            if value:
+                out[key] = value
+        lines = data.get("script_lines")
+        # Only accept the translation when the line count matches 1:1 — otherwise the
+        # visuals (anchored per line) would desync; keep originals in that case.
+        if isinstance(lines, list) and len(lines) == len(base["script_lines"]) and lines:
+            out["script_lines"] = [str(x).strip() for x in lines]
+        return out
+    except Exception:  # noqa: BLE001 - translation is best-effort; degrade to original
+        return base
+
+
 def generate_research_brief(
     niche: str,
     topic: str,
@@ -650,12 +713,12 @@ class OpenAIProvider:
         text = ""
         if grounding_available:
             try:
-                text = self._web_search(config.GENERATION_OPENAI_RESEARCH_MODEL, prompt)
+                text = self._web_search(config.GENERATION_OPENAI_SEARCH_MODEL, prompt)
                 grounding_used = True
             except Exception as error:  # noqa: BLE001 - web search may be unsupported
                 grounding_warning = f"web_search_unavailable: {error}"
         if not text:
-            text = self._chat(config.GENERATION_OPENAI_RESEARCH_MODEL, prompt, json_object=True)
+            text = self._chat(config.GENERATION_OPENAI_SEARCH_MODEL, prompt, json_object=True)
         payload = safe_json_parse(text)
         if not isinstance(payload, dict):
             raise ValueError("openai_research_not_object")
@@ -666,7 +729,7 @@ class OpenAIProvider:
             grounding_used=grounding_used,
             grounding_available=grounding_available,
             grounding_warning=grounding_warning,
-            model=config.GENERATION_OPENAI_RESEARCH_MODEL,
+            model=config.GENERATION_OPENAI_SEARCH_MODEL,
         )
 
     def generate_narrative_plan(
