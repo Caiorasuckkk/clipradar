@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 from datetime import datetime
@@ -377,9 +378,24 @@ def _load_projects() -> list[dict[str, Any]]:
 
 
 def _save_projects(projects: list[dict[str, Any]]) -> None:
+    # Atomic write: serialize fully to a temp file, then os.replace() it into place.
+    # A plain open(w)+dump truncates first, so a concurrent write (e.g. the job
+    # worker saving while the API saves) could leave a torn/half-written file that
+    # fails to parse — which silently empties the project store and 404s every
+    # project. os.replace is atomic on the same filesystem, so readers always see a
+    # complete JSON.
     PROJECTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with PROJECTS_PATH.open("w", encoding="utf-8") as file:
-        json.dump({"projects": projects}, file, ensure_ascii=False, indent=2)
+    tmp = PROJECTS_PATH.with_name(f"{PROJECTS_PATH.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as file:
+            json.dump({"projects": projects}, file, ensure_ascii=False, indent=2)
+        os.replace(tmp, PROJECTS_PATH)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
 
 def _status(value: object) -> str:
