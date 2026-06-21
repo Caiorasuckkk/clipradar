@@ -36,7 +36,7 @@ workflows:
         script: |
           flutter build ipa --release \
             --dart-define=API_BASE_URL="$API_BASE_URL" \
-            --dart-define=API_TOKEN="$API_TOKEN" \
+            --dart-define=API_TOKEN="$API_AUTH_TOKEN" \
             --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - build/ios/ipa/*.ipa
