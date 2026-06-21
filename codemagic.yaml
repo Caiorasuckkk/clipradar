@@ -3,8 +3,8 @@
 #
 # ONE-TIME SETUP in the Codemagic UI before the first build:
 #  1. Teams → Integrations → App Store Connect: add your App Store Connect API
-#     key (.p8 + Key ID + Issuer ID). Name the integration exactly:  AppStore
-#     (or change the name under `integrations.app_store_connect` below to match).
+#     key (.p8 + Key ID + Issuer ID). The integration is named `Dark` (must match
+#     the name under `integrations.app_store_connect` below).
 #  2. Create an environment variable GROUP named `darkflow_config` with:
 #        - API_BASE_URL  = your backend URL (e.g. the Cloudflare tunnel HTTPS URL)
 #        - API_TOKEN     = the same value as backend .env API_AUTH_TOKEN  (mark as Secure)
@@ -17,7 +17,7 @@ workflows:
     max_build_duration: 60
     working_directory: review_app
     integrations:
-      app_store_connect: AppStore
+      app_store_connect: Dark
     environment:
       ios_signing:
         distribution_type: app_store
