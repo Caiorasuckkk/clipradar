@@ -6,9 +6,12 @@
 #     key (.p8 + Key ID + Issuer ID). The integration is named `Dark` (must match
 #     the name under `integrations.app_store_connect` below).
 #  2. Create an environment variable GROUP named `darkflow_config` with:
-#        - API_BASE_URL  = your backend URL (e.g. the Cloudflare tunnel HTTPS URL)
-#        - API_TOKEN     = the same value as backend .env API_AUTH_TOKEN  (mark as Secure)
-#     These are injected at build time via --dart-define (never committed to git).
+#        - API_BASE_URL            = your backend URL (Cloudflare tunnel HTTPS URL)
+#        - API_AUTH_TOKEN          = same value as backend .env API_AUTH_TOKEN (Secure)
+#        - CERTIFICATE_PRIVATE_KEY = contents of an RSA private key, PEM (Secure).
+#            Generate once:  openssl genrsa 2048   (paste the whole file, including
+#            the BEGIN/END lines). Reused every build to create/reuse the iOS
+#            distribution certificate.
 
 workflows:
   ios-testflight:
@@ -35,8 +38,13 @@ workflows:
       - name: Set up code signing (creates distribution cert + profile if missing)
         script: |
           keychain initialize
+          # CERTIFICATE_PRIVATE_KEY (secure env var) supplies the RSA key used to
+          # create/reuse the distribution certificate — required since there is no
+          # Mac/Keychain to generate one. Without it: "Cannot save Signing
+          # Certificates without certificate private key".
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
+            --certificate-key="@env:CERTIFICATE_PRIVATE_KEY" \
             --create
           keychain add-certificates
           xcode-project use-profiles
