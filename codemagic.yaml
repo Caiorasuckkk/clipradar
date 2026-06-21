@@ -19,21 +19,23 @@ workflows:
     integrations:
       app_store_connect: Dark
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.caio.darkflow
+      # NOTE: no `ios_signing` block on purpose — signing is done fully manually in
+      # the script below so the cert + provisioning profile get CREATED on the first
+      # build (the ios_signing block only fetches existing ones and fails first).
       flutter: stable
       xcode: latest
       cocoapods: default
       groups:
         - darkflow_config            # provides API_BASE_URL and API_TOKEN
+      vars:
+        BUNDLE_ID: "com.caio.darkflow"
     scripts:
       - name: Flutter pub get
         script: flutter pub get
       - name: Set up code signing (creates distribution cert + profile if missing)
         script: |
           keychain initialize
-          app-store-connect fetch-signing-files "com.caio.darkflow" \
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
           keychain add-certificates
