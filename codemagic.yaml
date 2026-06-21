@@ -30,8 +30,14 @@ workflows:
     scripts:
       - name: Flutter pub get
         script: flutter pub get
-      - name: Set up provisioning profiles
-        script: xcode-project use-profiles
+      - name: Set up code signing (creates distribution cert + profile if missing)
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "com.caio.darkflow" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
       - name: Build IPA (with backend URL + token baked in)
         script: |
           flutter build ipa --release \
