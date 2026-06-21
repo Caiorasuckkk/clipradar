@@ -18,10 +18,12 @@ import '../models/posts_summary.dart';
 import 'app_config.dart';
 
 class ApiClient {
-  ApiClient({http.Client? client, this.baseUrl = AppConfig.apiBaseUrl})
-    : _client = client ?? _AuthClient(http.Client());
+  ApiClient({http.Client? client, String? baseUrl})
+    : baseUrl = (baseUrl ?? AppConfig.apiBaseUrl).replaceAll(RegExp(r'/+$'), ''),
+      _client = client ?? _AuthClient(http.Client());
 
   final http.Client _client;
+  // Trailing slashes are stripped so '$baseUrl$path' never produces '//'.
   final String baseUrl;
 
   Uri _uri(String path, [Map<String, String>? query]) {
