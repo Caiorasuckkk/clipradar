@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:gal/gal.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 import '../core/api_client.dart';
 import '../theme/app_colors.dart';
@@ -1018,18 +1021,41 @@ class _ProgressCard extends StatelessWidget {
   final String label;
   final String videoUrl;
 
+  /// Baixa o vídeo renderizado e salva no rolo da câmera (galeria) do celular.
   Future<void> _download(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
-    bool ok = false;
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Baixando vídeo...')),
+    );
+    File? temp;
     try {
-      ok = await launchUrl(Uri.parse(videoUrl), mode: LaunchMode.externalApplication);
-    } catch (_) {
-      ok = false;
-    }
-    if (!ok) {
+      final response = await http.get(Uri.parse(videoUrl));
+      if (response.statusCode != 200) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+      final dir = await getTemporaryDirectory();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      temp = File('${dir.path}/darkflow_$stamp.mp4');
+      await temp.writeAsBytes(response.bodyBytes);
+
+      await Gal.putVideo(temp.path, album: 'DarkFlow');
+
       messenger.showSnackBar(
-        const SnackBar(content: Text('Não foi possível abrir o download.')),
+        const SnackBar(content: Text('Vídeo salvo na galeria.')),
       );
+    } on GalException catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Não foi possível salvar: ${e.type.message}')),
+      );
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Não foi possível baixar o vídeo.')),
+      );
+    } finally {
+      // Limpa o arquivo temporário; a cópia na galeria permanece.
+      if (temp != null && await temp.exists()) {
+        await temp.delete();
+      }
     }
   }
 

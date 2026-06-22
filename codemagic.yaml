@@ -53,7 +53,7 @@ workflows:
           # $BUILD_NUMBER auto-increments per Codemagic build, so each upload has a
           # higher build number than the last (App Store Connect requires it).
           flutter build ipa --release \
-            --build-name=1.0.0 \
+            --build-name=1.1.0 \
             --build-number=$BUILD_NUMBER \
             --dart-define=API_BASE_URL="$API_BASE_URL" \
             --dart-define=API_TOKEN="$API_AUTH_TOKEN" \
