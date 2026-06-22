@@ -19,11 +19,15 @@ import 'app_config.dart';
 
 class ApiClient {
   ApiClient({http.Client? client, String? baseUrl})
-    : baseUrl = (baseUrl ?? AppConfig.apiBaseUrl).replaceAll(RegExp(r'/+$'), ''),
+    : baseUrl = (baseUrl ?? AppConfig.apiBaseUrl)
+          .replaceAll(RegExp(r'\s'), '')
+          .replaceAll(RegExp(r'/+$'), ''),
       _client = client ?? _AuthClient(http.Client());
 
   final http.Client _client;
-  // Trailing slashes are stripped so '$baseUrl$path' never produces '//'.
+  // Whitespace is stripped (a stray space/newline in API_BASE_URL becomes %20
+  // and breaks Uri.parse) and trailing slashes are removed so '$baseUrl$path'
+  // never produces '//'.
   final String baseUrl;
 
   Uri _uri(String path, [Map<String, String>? query]) {
