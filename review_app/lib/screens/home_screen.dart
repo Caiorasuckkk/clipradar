@@ -13,6 +13,7 @@ import '../widgets/df_metric_card.dart';
 import '../widgets/df_status_chip.dart';
 import 'generation_auto_screen.dart';
 import 'generation_performance_screen.dart';
+import 'generation_projects_screen.dart';
 import 'processing_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -126,6 +127,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openProjects() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const GenerationProjectsScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -231,7 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
         DFSecondaryButton(
           label: 'Projetos',
           icon: Icons.folder_copy_rounded,
-          onPressed: widget.onOpenGeneration,
+          onPressed: _openProjects,
         ),
       ],
     );

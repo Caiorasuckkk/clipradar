@@ -488,6 +488,12 @@ class GenerationProject {
     required this.watchabilityNegativeSignals,
     required this.createdAt,
     required this.updatedAt,
+    required this.bilingualParent,
+    required this.bilingualBaseLanguage,
+    required this.publishTitles,
+    required this.publishHashtags,
+    required this.publishDescription,
+    required this.voiceCaptionCount,
   });
 
   final String projectId;
@@ -602,6 +608,18 @@ class GenerationProject {
   final List<String> watchabilityNegativeSignals;
   final String createdAt;
   final String updatedAt;
+
+  /// project_id do projeto "pai" quando este é a versão em outro idioma de um
+  /// vídeo bilíngue; vazio quando é o próprio pai/único idioma.
+  final String bilingualParent;
+  final String bilingualBaseLanguage;
+
+  /// Pacote de publicação (gerado para postar): títulos sugeridos, hashtags e
+  /// descrição. Legendas no vídeo vêm de [scriptLines]/[voiceCaptionCount].
+  final List<String> publishTitles;
+  final List<String> publishHashtags;
+  final String publishDescription;
+  final int voiceCaptionCount;
 
   factory GenerationProject.fromJson(Map<String, dynamic> json) {
     return GenerationProject(
@@ -759,6 +777,12 @@ class GenerationProject {
       ),
       createdAt: _string(json['created_at']),
       updatedAt: _string(json['updated_at']),
+      bilingualParent: _string(json['bilingual_parent']),
+      bilingualBaseLanguage: _string(json['bilingual_base_language']),
+      publishTitles: _stringList(json['publish_titles']),
+      publishHashtags: _stringList(json['publish_hashtags']),
+      publishDescription: _string(json['publish_description']),
+      voiceCaptionCount: _int(json['voice_caption_count']),
     );
   }
 
