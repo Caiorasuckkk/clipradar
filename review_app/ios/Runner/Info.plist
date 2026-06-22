@@ -43,6 +43,8 @@
 	</array>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>O DarkFlow salva os vídeos gerados na sua galeria.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>O DarkFlow precisa de acesso à sua galeria para salvar os vídeos gerados.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
