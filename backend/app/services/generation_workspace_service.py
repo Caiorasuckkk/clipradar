@@ -4,6 +4,8 @@ import json
 import os
 import re
 import shutil
+import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +26,12 @@ from app.services.generation_watchability_service import (
 
 
 PROJECTS_PATH = config.STORAGE_GENERATION_DIR / "projects.json"
+
+# Serializes all reads/writes of projects.json. The API (threadpool) and the
+# background job worker run in the same process, so an in-process lock prevents
+# them from opening the file at the same moment — which on Windows makes
+# os.replace fail with a sharing violation (WinError 32/5).
+_STORE_LOCK = threading.RLock()
 
 NICHE_ANGLES: dict[str, list[str]] = {
     "curiosidades": ["o detalhe que muda tudo", "a história pouco contada", "o erro que quase ninguém percebe"],
@@ -381,16 +389,17 @@ def _load_projects(strict: bool = False) -> list[dict[str, Any]]:
     # error they MUST abort instead of silently overwriting the store with an
     # empty list — that bug wiped dozens of projects. Reads stay lenient so the
     # UI degrades to "empty" instead of erroring.
-    if not PROJECTS_PATH.exists():
-        return []
-    try:
-        with PROJECTS_PATH.open("r", encoding="utf-8") as file:
-            payload = json.load(file)
-    except Exception as error:
-        _quarantine_corrupt_file()
-        if strict:
-            raise ProjectStoreError(f"projects.json ilegível: {error}") from error
-        return []
+    with _STORE_LOCK:
+        if not PROJECTS_PATH.exists():
+            return []
+        try:
+            with PROJECTS_PATH.open("r", encoding="utf-8") as file:
+                payload = json.load(file)
+        except Exception as error:
+            _quarantine_corrupt_file()
+            if strict:
+                raise ProjectStoreError(f"projects.json ilegível: {error}") from error
+            return []
     if isinstance(payload, dict):
         items = payload.get("projects", [])
     else:
@@ -403,24 +412,33 @@ def _load_projects(strict: bool = False) -> list[dict[str, Any]]:
 
 
 def _save_projects(projects: list[dict[str, Any]]) -> None:
-    # Atomic write: serialize fully to a temp file, then os.replace() it into place.
-    # A plain open(w)+dump truncates first, so a concurrent write (e.g. the job
-    # worker saving while the API saves) could leave a torn/half-written file that
-    # fails to parse — which silently empties the project store and 404s every
-    # project. os.replace is atomic on the same filesystem, so readers always see a
-    # complete JSON.
+    # Atomic write under the store lock: serialize to a temp file, then os.replace()
+    # it into place. The lock keeps our own threads from holding the file open during
+    # the replace; the retry loop absorbs transient external locks (antivirus, an
+    # editor) that on Windows surface as WinError 32 (in use) or 5 (access denied).
     PROJECTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = PROJECTS_PATH.with_name(f"{PROJECTS_PATH.name}.{os.getpid()}.tmp")
-    try:
-        with tmp.open("w", encoding="utf-8") as file:
-            json.dump({"projects": projects}, file, ensure_ascii=False, indent=2)
-        os.replace(tmp, PROJECTS_PATH)
-    finally:
+    with _STORE_LOCK:
+        tmp = PROJECTS_PATH.with_name(f"{PROJECTS_PATH.name}.{os.getpid()}.tmp")
         try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError:
-            pass
+            with tmp.open("w", encoding="utf-8") as file:
+                json.dump({"projects": projects}, file, ensure_ascii=False, indent=2)
+            last_error: OSError | None = None
+            for attempt in range(10):
+                try:
+                    os.replace(tmp, PROJECTS_PATH)
+                    last_error = None
+                    break
+                except PermissionError as error:  # Windows sharing violation
+                    last_error = error
+                    time.sleep(0.1 * (attempt + 1))
+            if last_error is not None:
+                raise last_error
+        finally:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
 
 
 def _status(value: object) -> str:
