@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -74,14 +75,14 @@ def create_project(payload: dict[str, Any]) -> dict[str, Any]:
             "updated_at": now,
         }
     )
-    projects = [item for item in _load_projects() if item.get("project_id") != project["project_id"]]
+    projects = [item for item in _load_projects(strict=True) if item.get("project_id") != project["project_id"]]
     projects.append(project)
     _save_projects(projects)
     return project
 
 
 def update_project(project_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-    projects = _load_projects()
+    projects = _load_projects(strict=True)
     updated: dict[str, Any] | None = None
     next_projects: list[dict[str, Any]] = []
     for project in projects:
@@ -97,7 +98,7 @@ def update_project(project_id: str, payload: dict[str, Any]) -> dict[str, Any] |
 
 
 def delete_project(project_id: str) -> bool:
-    projects = _load_projects()
+    projects = _load_projects(strict=True)
     next_projects = [item for item in projects if str(item.get("project_id") or "") != project_id]
     if len(next_projects) == len(projects):
         return False
@@ -360,19 +361,43 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _load_projects() -> list[dict[str, Any]]:
+class ProjectStoreError(RuntimeError):
+    """Raised when projects.json exists but cannot be parsed."""
+
+
+def _quarantine_corrupt_file() -> None:
+    # Preserve the unreadable file so its data isn't lost. Use a pid-suffixed
+    # name so we never clobber a previous corrupt backup.
+    try:
+        backup = PROJECTS_PATH.with_name(f"{PROJECTS_PATH.name}.corrupt.{os.getpid()}.bak")
+        if not backup.exists():
+            shutil.copy2(PROJECTS_PATH, backup)
+    except OSError:
+        pass
+
+
+def _load_projects(strict: bool = False) -> list[dict[str, Any]]:
+    # strict=True is used by mutating callers (create/update/delete). On a parse
+    # error they MUST abort instead of silently overwriting the store with an
+    # empty list — that bug wiped dozens of projects. Reads stay lenient so the
+    # UI degrades to "empty" instead of erroring.
     if not PROJECTS_PATH.exists():
         return []
     try:
         with PROJECTS_PATH.open("r", encoding="utf-8") as file:
             payload = json.load(file)
-    except Exception:
+    except Exception as error:
+        _quarantine_corrupt_file()
+        if strict:
+            raise ProjectStoreError(f"projects.json ilegível: {error}") from error
         return []
     if isinstance(payload, dict):
         items = payload.get("projects", [])
     else:
         items = payload
     if not isinstance(items, list):
+        if strict:
+            raise ProjectStoreError("projects.json em formato inesperado")
         return []
     return [_normalize_project(item) for item in items if isinstance(item, dict)]
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/api_client.dart';
 import '../core/video_download.dart';
@@ -26,6 +27,7 @@ class GenerationProjectsScreen extends StatefulWidget {
 class _GenerationProjectsScreenState extends State<GenerationProjectsScreen> {
   final ApiClient _api = ApiClient();
   List<_ProjectGroup>? _groups;
+  int _hiddenDrafts = 0;
   String? _error;
   bool _loading = false;
 
@@ -43,8 +45,14 @@ class _GenerationProjectsScreenState extends State<GenerationProjectsScreen> {
     try {
       final projects = await _api.getGenerationProjects();
       if (!mounted) return;
+      // Histórico = vídeos prontos. Rascunhos sem render (sem título, status
+      // idea/ready_for_visual) ficam de fora, mas contamos para não sumirem
+      // silenciosamente.
+      final ready =
+          projects.where((p) => p.renderStatus == 'ready').toList();
       setState(() {
-        _groups = _groupByTheme(projects);
+        _groups = _groupByTheme(ready);
+        _hiddenDrafts = projects.length - ready.length;
         _loading = false;
       });
     } catch (error) {
@@ -116,14 +124,20 @@ class _GenerationProjectsScreenState extends State<GenerationProjectsScreen> {
       return RefreshIndicator(
         onRefresh: _load,
         child: ListView(
-          children: const [
-            SizedBox(height: 120),
+          children: [
+            const SizedBox(height: 120),
             Center(
               child: Text(
-                'Nenhum projeto gerado ainda.',
-                style: TextStyle(color: AppColors.muted),
+                _hiddenDrafts > 0
+                    ? 'Nenhum vídeo renderizado ainda.'
+                    : 'Nenhum projeto gerado ainda.',
+                style: const TextStyle(color: AppColors.muted),
               ),
             ),
+            if (_hiddenDrafts > 0) ...[
+              const SizedBox(height: 8),
+              Center(child: _draftsNote()),
+            ],
           ],
         ),
       );
@@ -132,12 +146,29 @@ class _GenerationProjectsScreenState extends State<GenerationProjectsScreen> {
       onRefresh: _load,
       child: ListView.separated(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
-        itemCount: groups.length,
+        itemCount: groups.length + (_hiddenDrafts > 0 ? 1 : 0),
         separatorBuilder: (_, _) => const SizedBox(height: 12),
-        itemBuilder: (_, i) => _ProjectGroupCard(group: groups[i], api: _api),
+        itemBuilder: (_, i) {
+          if (i >= groups.length) {
+            return Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Center(child: _draftsNote()),
+            );
+          }
+          return _ProjectGroupCard(
+            group: groups[i],
+            api: _api,
+            onDeleted: _load,
+          );
+        },
       ),
     );
   }
+
+  Widget _draftsNote() => Text(
+        '$_hiddenDrafts rascunho(s) sem vídeo ocultado(s).',
+        style: const TextStyle(color: AppColors.muted, fontSize: 12),
+      );
 }
 
 class _ProjectGroup {
@@ -151,10 +182,15 @@ class _ProjectGroup {
 }
 
 class _ProjectGroupCard extends StatefulWidget {
-  const _ProjectGroupCard({required this.group, required this.api});
+  const _ProjectGroupCard({
+    required this.group,
+    required this.api,
+    required this.onDeleted,
+  });
 
   final _ProjectGroup group;
   final ApiClient api;
+  final VoidCallback onDeleted;
 
   @override
   State<_ProjectGroupCard> createState() => _ProjectGroupCardState();
@@ -162,6 +198,52 @@ class _ProjectGroupCard extends StatefulWidget {
 
 class _ProjectGroupCardState extends State<_ProjectGroupCard> {
   bool _expanded = false;
+  bool _deleting = false;
+
+  Future<void> _confirmDelete() async {
+    final langs = widget.group.langs;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Apagar projeto?'),
+        content: Text(
+          langs.length > 1
+              ? 'Isso remove as ${langs.length} versões de idioma deste tema. '
+                  'Não dá para desfazer.'
+              : 'Isso remove o projeto. Não dá para desfazer.',
+          style: const TextStyle(color: AppColors.secondaryText),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Apagar', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _deleting = true);
+    try {
+      for (final p in langs) {
+        await widget.api.deleteGenerationProject(p.projectId);
+      }
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Projeto apagado.')),
+      );
+      widget.onDeleted();
+    } catch (_) {
+      if (mounted) setState(() => _deleting = false);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Não foi possível apagar.')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -218,11 +300,31 @@ class _ProjectGroupCardState extends State<_ProjectGroupCard> {
                       ],
                     ),
                   ),
-                  Icon(
-                    _expanded
-                        ? Icons.keyboard_arrow_up_rounded
-                        : Icons.keyboard_arrow_down_rounded,
-                    color: AppColors.secondaryText,
+                  Column(
+                    children: [
+                      _deleting
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: AppColors.danger),
+                            )
+                          : InkWell(
+                              borderRadius: BorderRadius.circular(8),
+                              onTap: _confirmDelete,
+                              child: const Padding(
+                                padding: EdgeInsets.all(4),
+                                child: Icon(Icons.delete_outline_rounded,
+                                    size: 20, color: AppColors.danger),
+                              ),
+                            ),
+                      const SizedBox(height: 10),
+                      Icon(
+                        _expanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        color: AppColors.secondaryText,
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -327,30 +429,61 @@ class _LangSection extends StatelessWidget {
             _note('Sem vídeo renderizado para este idioma '
                 '(status: ${_statusLabel(p.renderStatus)}).'),
           const SizedBox(height: 14),
-          _block('Títulos', _bullets(titles)),
+          _block(context, 'Títulos', _bullets(titles),
+              copyText: titles.join('\n')),
           _block(
+            context,
             'Legendas / roteiro',
             p.scriptLines.isEmpty
                 ? _note('Sem roteiro salvo.')
                 : _bullets(p.scriptLines),
+            copyText: p.scriptLines.isEmpty ? null : p.scriptLines.join('\n'),
           ),
-          if (hashtags.isNotEmpty) _block('Hashtags', _bullets(hashtags)),
+          if (hashtags.isNotEmpty)
+            _block(context, 'Hashtags', _bullets(hashtags),
+                copyText: hashtags.join(' ')),
           if (p.publishDescription.isNotEmpty)
-            _block('Descrição', _note(p.publishDescription)),
+            _block(context, 'Descrição', _note(p.publishDescription),
+                copyText: p.publishDescription),
         ],
       ),
     );
   }
 
-  Widget _block(String label, Widget child) {
+  Widget _block(BuildContext context, String label, Widget child,
+      {String? copyText}) {
+    final canCopy = copyText != null && copyText.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label.toUpperCase(),
-              style: AppTextStyles.muted.copyWith(
-                  fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+          Row(
+            children: [
+              Expanded(
+                child: Text(label.toUpperCase(),
+                    style: AppTextStyles.muted.copyWith(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5)),
+              ),
+              if (canCopy)
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () async {
+                    await Clipboard.setData(ClipboardData(text: copyText));
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('$label copiado.')),
+                    );
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(Icons.copy_rounded, size: 16, color: AppColors.cyan),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 6),
           child,
         ],
@@ -374,7 +507,7 @@ class _LangSection extends StatelessWidget {
                   child: CircleAvatar(radius: 2, backgroundColor: AppColors.cyan),
                 ),
                 Expanded(
-                  child: Text(item,
+                  child: SelectableText(item,
                       style: AppTextStyles.body
                           .copyWith(color: AppColors.secondaryText)),
                 ),
@@ -385,7 +518,7 @@ class _LangSection extends StatelessWidget {
     );
   }
 
-  Widget _note(String text) => Text(
+  Widget _note(String text) => SelectableText(
         text,
         style: AppTextStyles.body.copyWith(color: AppColors.muted),
       );
