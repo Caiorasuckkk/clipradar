@@ -372,10 +372,13 @@ def _try_football(item: dict[str, Any], project: dict[str, Any], used_ids: set[s
         results = list_cached_clips()
     if not results:
         return False
-    # Prefer a FRESH (unused) clip so segments don't repeat; only reuse when the
-    # whole pool is exhausted.
+    # Spread across DIFFERENT source videos to avoid the same clip/compilation
+    # repeating. Tier 1: a fresh clip from a source not used yet. Tier 2: any
+    # fresh clip. Tier 3: reuse (last resort) so the segment still gets footage.
+    used_sources = {m.rsplit("_", 1)[0] for m in used_ids if m}
     fresh = [r for r in results if str(r.get("media_id") or "") not in used_ids]
-    pool = fresh or results
+    new_source = [r for r in fresh if str(r.get("media_id") or "").rsplit("_", 1)[0] not in used_sources]
+    pool = new_source or fresh or results
     best: dict[str, Any] | None = None
     best_score = -1.0
     best_reason = ""

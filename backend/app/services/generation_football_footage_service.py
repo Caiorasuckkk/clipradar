@@ -113,10 +113,10 @@ def _download_sources(query: str, count: int, max_duration: int, subject_stem: s
 
     def _run(filter_expr: str) -> list[Path]:
         opts = {
-            # Prefer a higher-res VIDEO-ONLY mp4 (up to 720p) — the render drops
-            # audio anyway, so no merge/audio is needed and quality goes up vs the
-            # 360p progressive-only stream. Falls back to progressive/best.
-            "format": "bestvideo[ext=mp4][height<=720]/bestvideo[height<=720]/best[ext=mp4][height<=720]/best",
+            # Quality: try 720p progressive (itag 22, single file the android
+            # client often serves without a JS runtime), then a 720p video-only
+            # mp4 (render drops audio anyway), then fall back to 360p/best.
+            "format": "22/bestvideo[ext=mp4][height<=720]/best[ext=mp4][height<=720]/best",
             "outtmpl": str(SOURCES_DIR / "%(id)s.%(ext)s"),
             "noplaylist": True,
             "ignoreerrors": True,
