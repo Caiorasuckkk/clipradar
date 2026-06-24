@@ -45,6 +45,37 @@ def _ffmpeg() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
+_js_runtime_ready = False
+
+
+def _ensure_js_runtime() -> bool:
+    """Make `deno` reachable so yt-dlp can run YouTube's JS challenge and hand out
+    HD (720p+) formats. winget installs deno outside the default PATH, so we find
+    it and prepend its dir to PATH for this process. Returns True if available."""
+    global _js_runtime_ready
+    if _js_runtime_ready:
+        return True
+    if shutil.which("deno"):
+        _js_runtime_ready = True
+        return True
+    home = os.path.expanduser("~")
+    local = os.environ.get("LOCALAPPDATA", os.path.join(home, "AppData", "Local"))
+    patterns = [
+        os.path.join(local, "Microsoft", "WinGet", "Packages", "DenoLand.Deno_*", "deno.exe"),
+        os.path.join(local, "Microsoft", "WinGet", "Links", "deno.exe"),
+        os.path.join(home, ".deno", "bin", "deno.exe"),
+        os.path.join(home, ".deno", "bin", "deno"),
+    ]
+    import glob
+    for pattern in patterns:
+        for match in glob.glob(pattern):
+            if os.path.isfile(match):
+                os.environ["PATH"] = os.path.dirname(match) + os.pathsep + os.environ.get("PATH", "")
+                _js_runtime_ready = True
+                return True
+    return False
+
+
 def _ffmpeg_dir_for_ytdlp() -> str:
     _BIN_DIR.mkdir(parents=True, exist_ok=True)
     target = _BIN_DIR / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
@@ -62,7 +93,7 @@ def search_football_clips(
     want: int = 12,
     seg_seconds: float = 5.0,
     max_sources: int = 4,
-    max_source_duration: int = 150,
+    max_source_duration: int = 720,
     subject_stem: str = "",
 ) -> list[dict[str, Any]]:
     """Return up to `want` local clip results for `query`. Cached per query.
@@ -109,14 +140,21 @@ def _download_sources(query: str, count: int, max_duration: int, subject_stem: s
         import yt_dlp
     except Exception:
         return []
+    has_deno = _ensure_js_runtime()  # unlock HD formats via deno when available
     SOURCES_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Best video up to 1080p (render drops audio anyway); falls back to whatever
+    # YouTube serves (360p when no PO token / HD formats are gated).
+    fmt = "bestvideo[ext=mp4][height<=1080]/bestvideo[height<=1080]/best[ext=mp4]/best"
+    # HD (720p+) formats now require a PO token; the practical way to get one is
+    # cookies from a browser logged into YouTube. Opt-in (never read silently):
+    # set GENERATION_FOOTBALL_COOKIES_BROWSER=edge|chrome|firefox. Without it,
+    # quality is capped at 360p even with deno.
+    cookies_browser = (os.environ.get("GENERATION_FOOTBALL_COOKIES_BROWSER") or "").strip().lower()
+
     def _run(filter_expr: str) -> list[Path]:
-        opts = {
-            # Quality: try 720p progressive (itag 22, single file the android
-            # client often serves without a JS runtime), then a 720p video-only
-            # mp4 (render drops audio anyway), then fall back to 360p/best.
-            "format": "22/bestvideo[ext=mp4][height<=720]/best[ext=mp4][height<=720]/best",
+        opts: dict[str, Any] = {
+            "format": fmt,
             "outtmpl": str(SOURCES_DIR / "%(id)s.%(ext)s"),
             "noplaylist": True,
             "ignoreerrors": True,
@@ -124,13 +162,16 @@ def _download_sources(query: str, count: int, max_duration: int, subject_stem: s
             "no_warnings": True,
             "ffmpeg_location": _ffmpeg_dir_for_ytdlp(),
             "match_filter": yt_dlp.utils.match_filter_func(filter_expr),
-            # Without a JS runtime (deno), the default web client often returns
-            # 403 on the progressive format URLs. The android/ios clients still
-            # hand out a usable stream, so prefer them.
-            "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
+            # web client + deno EJS solver = JS challenges solved (no 403s);
+            # android/ios as fallback. EJS download is enabled so deno is used.
+            "extractor_args": {"youtube": {"player_client": ["web", "android", "ios"]}},
             "retries": 3,
             "fragment_retries": 3,
         }
+        if has_deno:
+            opts["remote_components"] = ["ejs:github"]
+        if cookies_browser:
+            opts["cookiesfrombrowser"] = (cookies_browser,)
         # Search extra candidates so the title filter has room to reject mismatches.
         search = f"ytsearch{max(count * 4, count)}:{query}"
         paths: list[Path] = []
