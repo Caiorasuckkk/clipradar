@@ -109,6 +109,7 @@ def start_auto_generation(
     scriptwriter = p.get("scriptwriter") if p else ""
     music_mood = p.get("music_mood") if p else ""
     visual_style = p.get("visual_style") if p else ""
+    footage_source = p.get("footage_source") if p else ""
     persona_id = (persona or "").strip().lower() if p else ""
 
     base_fields = {
@@ -123,6 +124,7 @@ def start_auto_generation(
         "scriptwriter": scriptwriter or "",
         "music_mood": music_mood or "",
         "visual_style": visual_style or "",
+        "footage_source": footage_source or "",
     }
 
     project = create_project(

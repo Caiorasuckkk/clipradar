@@ -10,7 +10,7 @@ from app.services.generation_workspace_service import get_project, update_projec
 
 
 VISUAL_TYPES = {"broll", "image", "text_card", "screenshot", "placeholder"}
-VISUAL_SOURCES = {"local", "pexels", "wikimedia", "pixabay", "openverse", "met", "generated", "manual", "placeholder"}
+VISUAL_SOURCES = {"local", "pexels", "wikimedia", "pixabay", "openverse", "met", "generated", "manual", "placeholder", "youtube"}
 LICENSE_LANES = {"safe", "pexels", "wikimedia", "pixabay", "openverse", "public_domain", "review", "restricted", "unknown"}
 VISUAL_STATUSES = {"suggestion", "selected", "missing", "needs_asset", "downloaded", "ready", "rejected"}
 
@@ -363,6 +363,8 @@ def _license_lane(item: dict[str, Any]) -> str:
         return "public_domain"
     if source == "generated":
         return "safe"
+    if source == "youtube":
+        return "review"  # copyrighted football footage — needs human review
     if media_type == "screenshot":
         return "review"
     if _contains_any(query, ["trailer", "gameplay", "transmissao completa", "transmissão completa", "logo"]):

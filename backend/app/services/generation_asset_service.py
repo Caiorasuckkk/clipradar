@@ -33,6 +33,7 @@ from app.services.generation_stock_media_service import (
     search_wikimedia_images,
     wikimedia_configured,
 )
+from app.services.generation_football_footage_service import search_football_clips
 from app.services.generation_llm_provider_service import generate_ai_image
 from app.services.generation_visual_query_service import build_search_queries
 from app.services.generation_visual_service import normalize_visual_item
@@ -68,7 +69,7 @@ def usable_items(project: dict[str, Any]) -> list[dict[str, Any]]:
 def acquire_assets(project: dict[str, Any], allow_fallback: bool = False) -> dict[str, Any]:
     pexels = pexels_configured()
     ai_cap = config.GENERATION_MAX_AI_IMAGES_PER_VIDEO if config.GENERATION_ENABLE_AI_IMAGE_FALLBACK else 0
-    any_source = pexels or wikimedia_configured() or ai_cap > 0
+    any_source = pexels or wikimedia_configured() or ai_cap > 0 or _football_mode(project)
     updated: list[dict[str, Any]] = []
     downloaded = 0
     ai_used = 0
@@ -286,11 +287,57 @@ def _try_real_image(
     return False
 
 
+def _football_mode(project: dict[str, Any]) -> bool:
+    """Football footage source is opt-in per project via footage_source=football
+    (set by the Futebol studio). Explicit only — never auto-triggers on niche."""
+    return str(project.get("footage_source") or "").strip().lower() == "football"
+
+
+def _football_query(project: dict[str, Any]) -> str:
+    """One query per video — the main subject (player/team) — so every item pulls
+    from the same downloaded sources (coherent, cache-friendly)."""
+    brief = project.get("research_brief") if isinstance(project.get("research_brief"), dict) else {}
+    entities = brief.get("key_entities") or []
+    for cand in (brief.get("subject"), entities[0] if entities else None, project.get("title"), project.get("idea")):
+        s = str(cand or "").strip()
+        if s:
+            return f"{s} football" if "football" not in s.lower() and "futebol" not in s.lower() else s
+    return "football highlights"
+
+
+def _try_football(item: dict[str, Any], project: dict[str, Any], used_ids: set[str]) -> bool:
+    query = _football_query(project)
+    try:
+        results = search_football_clips(query, want=8)
+    except Exception:
+        results = []
+    best: dict[str, Any] | None = None
+    best_score = -1.0
+    best_reason = ""
+    for result in results:
+        media_id = str(result.get("media_id") or "")
+        if media_id and media_id in used_ids:
+            continue
+        score, reason = _score(result, query)
+        if score > best_score:
+            best, best_score, best_reason = result, score, reason
+    if best is None:
+        return False
+    return _apply_local_asset(item, best, "video", best_score, best_reason or "football", query, used_ids)
+
+
 def _resolve_item_asset(
     item: dict[str, Any], project: dict[str, Any], used_ids: set[str], ai_remaining: int = 0
 ) -> dict[str, Any] | None:
     queries = build_search_queries(item, project)
     item["search_queries_attempted"] = queries
+
+    # FOOTBALL MODE: real football footage (yt-dlp) takes priority. Stock/AI can't
+    # produce named players (Messi/Mbappé), so this is the only relevant source.
+    # Falls through to the normal sources if no clip is found, so it still renders.
+    if _football_mode(project):
+        if _try_football(item, project, used_ids):
+            return item
 
     prefer_specific = _prefer_specific(item, project)
     subject = str(item.get("wiki_subject") or "").strip()
@@ -486,6 +533,45 @@ def _apply_asset(
             "selected_asset_reason": reason,
             "selected_query": query,
             "source_credit": str(result.get("photographer") or result.get("credit") or ""),
+        }
+    )
+    return True
+
+
+def _apply_local_asset(
+    item: dict[str, Any],
+    result: dict[str, Any],
+    media_type: str,
+    score: float,
+    reason: str,
+    query: str,
+    used_ids: set[str],
+) -> bool:
+    """Attach an already-local clip (e.g. football footage) without an HTTP
+    download. Mirrors _apply_asset's bookkeeping."""
+    raw = str(result.get("media_path") or "")
+    path = Path(raw)
+    if not raw or not path.exists() or not path.is_file():
+        return False
+    media_id = str(result.get("media_id") or "")
+    if media_id:
+        used_ids.add(media_id)
+    src = str(result.get("source") or "youtube")
+    item.update(
+        {
+            "source": src,
+            "license_lane": str(result.get("license_lane") or "review"),
+            "media_url": "",
+            "thumbnail_url": str(result.get("thumbnail_url") or item.get("thumbnail_url") or ""),
+            "media_path": raw,
+            "status": "downloaded",
+            "asset_error": "",
+            "fallback_visual": False,
+            "media_type": media_type,
+            "selected_asset_score": round(float(score), 2),
+            "selected_asset_reason": reason,
+            "selected_query": query,
+            "source_credit": "",
         }
     )
     return True

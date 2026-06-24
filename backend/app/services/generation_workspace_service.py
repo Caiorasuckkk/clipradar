@@ -348,6 +348,9 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         "scriptwriter": _clean_multiline(payload.get("scriptwriter")),
         "music_mood": _clean(payload.get("music_mood")),
         "visual_style": _clean(payload.get("visual_style")),
+        # Footage source for the asset pipeline: "football" routes b-roll to
+        # real football clips (yt-dlp) instead of stock. Empty = default stock.
+        "footage_source": _clean(payload.get("footage_source")),
         "posted_platform": _clean(payload.get("posted_platform")),
         "posted_url": _clean(payload.get("posted_url")),
         "posted_video_id": _clean(payload.get("posted_video_id")),
