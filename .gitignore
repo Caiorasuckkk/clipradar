@@ -47,3 +47,6 @@ tts_test/
 .obsidian/
 # Apple App Store Connect API key — never commit.
 *.p8
+
+# Throwaway analysis/inspection artifacts (frames, reference videos)
+backend/app/storage/analysis/
