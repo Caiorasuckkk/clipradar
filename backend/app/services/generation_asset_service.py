@@ -33,7 +33,7 @@ from app.services.generation_stock_media_service import (
     search_wikimedia_images,
     wikimedia_configured,
 )
-from app.services.generation_football_footage_service import search_football_clips
+from app.services.generation_football_footage_service import search_football_clips, list_cached_clips
 from app.services.generation_llm_provider_service import generate_ai_image
 from app.services.generation_visual_query_service import build_search_queries
 from app.services.generation_visual_service import normalize_visual_item
@@ -293,41 +293,87 @@ def _football_mode(project: dict[str, Any]) -> bool:
     return str(project.get("footage_source") or "").strip().lower() == "football"
 
 
-def _football_query(project: dict[str, Any]) -> tuple[str, str]:
-    """One query per video — the main subject (player/team) — so every item pulls
-    from the same downloaded sources (coherent, cache-friendly). Returns
-    (query, subject_stem) where the stem is the player's name used to bias the
-    YouTube search toward titles that actually mention them."""
+_FOOTBALL_STOP = {
+    "que", "com", "para", "pelo", "pela", "dos", "das", "uma", "uns", "seu", "sua",
+    "mais", "como", "mas", "por", "depois", "antes", "ainda", "todo", "toda", "isso",
+    "esse", "essa", "aqui", "ele", "ela", "fora", "dentro", "campo", "futebol",
+}
+
+
+_SUBJECT_NOISE = {
+    "historia", "história", "trajetoria", "trajetória", "lenda", "saga", "ascensao",
+    "ascensão", "carreira", "menino", "craque", "jogador", "futebol", "selecao",
+    "seleção", "brasil", "mundo", "polemica", "polêmica", "polemicas", "polêmicas",
+}
+
+
+def _football_subject(project: dict[str, Any]) -> tuple[str, str]:
+    """Returns (subject, stem): the PLAYER/TEAM name (e.g. 'Neymar Jr'), not the
+    verbose theme, and the surname stem used to bias the YouTube title filter."""
     brief = project.get("research_brief") if isinstance(project.get("research_brief"), dict) else {}
-    entities = brief.get("key_entities") or []
-    subject = ""
-    for cand in (brief.get("subject"), entities[0] if entities else None, project.get("title"), project.get("idea")):
-        s = str(cand or "").strip()
-        if s:
-            subject = s
+    entities = [str(e or "").strip() for e in (brief.get("key_entities") or []) if str(e or "").strip()]
+    # 1) A short, name-like key entity wins (e.g. "Neymar", "Mbappé", "Real Madrid").
+    for e in entities:
+        if 1 <= len(e.split()) <= 2 and e[:1].isupper() and _strip_accents_lower(e) not in _SUBJECT_NOISE:
+            subject = e
             break
+    else:
+        # 2) Otherwise pull the first capitalised name from the title/subject/idea,
+        # dropping generic theme words ("A história de ...").
+        text = " ".join(str(project.get(k) or "") for k in ("title", "idea"))
+        text += " " + str(brief.get("subject") or "")
+        caps = re.findall(r"\b[A-ZÀ-Þ][A-Za-zÀ-ÿ]{2,}(?:\s+(?:Jr|Júnior|Neto))?\b", text)
+        caps = [c for c in caps if _strip_accents_lower(c.split()[0]) not in _SUBJECT_NOISE]
+        subject = caps[0] if caps else (entities[0] if entities else "")
     if not subject:
-        return "football highlights", ""
-    # Stem = longest meaningful word (usually the surname), accent-stripped.
-    words = [w for w in re.findall(r"[A-Za-zÀ-ÿ]+", subject) if len(w) >= 4]
+        return "football", ""
+    words = [w for w in re.findall(r"[A-Za-zÀ-ÿ]+", subject) if len(w) >= 3]
     stem = _strip_accents_lower(max(words, key=len)) if words else ""
-    # Bias the search toward real match footage (goals/skills) so we don't pull
-    # talk shows or cartoons.
-    query = f"{subject} gols dribles melhores momentos"
-    return query, stem
+    return subject, stem
+
+
+def _football_item_query(project: dict[str, Any], item: dict[str, Any], subject: str) -> str:
+    """Per-segment query so the footage follows the script: the player plus the
+    salient words of THIS line (club/competition/year), e.g. 'Neymar Barcelona'."""
+    idx = int(item.get("script_line_index") or 0)
+    lines = project.get("script_lines") or []
+    line = str(lines[idx]) if 0 <= idx < len(lines) else ""
+    subj_words = set(_strip_accents_lower(subject).split())
+    # Capitalised tokens are usually clubs/competitions (Barcelona, PSG, Santos).
+    caps = [w for w in re.findall(r"\b[A-ZÀ-Þ][A-Za-zÀ-ÿ]{2,}\b", line)
+            if _strip_accents_lower(w) not in subj_words]
+    extra = caps[:2]
+    if not extra:
+        # No proper noun: pull a couple of meaningful words from the line.
+        extra = [w for w in re.findall(r"[A-Za-zÀ-ÿ]{4,}", line)
+                 if _strip_accents_lower(w) not in subj_words
+                 and _strip_accents_lower(w) not in _FOOTBALL_STOP][:2]
+    tail = " ".join(extra) if extra else "gols dribles"
+    return f"{subject} {tail}".strip()
 
 
 def _try_football(item: dict[str, Any], project: dict[str, Any], used_ids: set[str]) -> bool:
-    query, stem = _football_query(project)
+    subject, stem = _football_subject(project)
+    query = _football_item_query(project, item, subject)
     try:
-        results = search_football_clips(query, want=14, subject_stem=stem)
+        results = search_football_clips(query, want=10, subject_stem=stem)
     except Exception:
         results = []
     if not results:
+        # Fall back to the player's generic highlights so the segment still gets
+        # real footage (and other segments' distinct queries avoid a 1-clip loop).
+        try:
+            results = search_football_clips(f"{subject} gols dribles melhores momentos", want=12, subject_stem=stem)
+        except Exception:
+            results = []
+    if not results:
+        # Last resort: reuse any football clip already downloaded for this video,
+        # so the segment stays real football footage (never a stock/AI image).
+        results = list_cached_clips()
+    if not results:
         return False
-    # Prefer a fresh (unused) clip; if all are used, REUSE the best one so every
-    # segment stays real football footage instead of falling back to a stock/AI
-    # image that breaks the football look.
+    # Prefer a FRESH (unused) clip so segments don't repeat; only reuse when the
+    # whole pool is exhausted.
     fresh = [r for r in results if str(r.get("media_id") or "") not in used_ids]
     pool = fresh or results
     best: dict[str, Any] | None = None

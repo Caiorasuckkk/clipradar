@@ -89,6 +89,21 @@ def search_football_clips(
     return _clip_results(out_dir, query)[:want]
 
 
+def list_cached_clips(label: str = "football", limit: int = 80) -> list[dict[str, Any]]:
+    """Every clip already downloaded this run, across all query folders — used as
+    a last-resort pool so a football-mode segment whose specific search failed
+    still gets REAL football footage instead of an off-topic stock/AI image."""
+    if not CLIPS_DIR.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for folder in CLIPS_DIR.iterdir():
+        if folder.is_dir():
+            out.extend(_clip_results(folder, label))
+            if len(out) >= limit:
+                break
+    return out[:limit]
+
+
 def _download_sources(query: str, count: int, max_duration: int, subject_stem: str = "") -> list[Path]:
     try:
         import yt_dlp
