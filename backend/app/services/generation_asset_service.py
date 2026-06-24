@@ -311,7 +311,9 @@ def _football_query(project: dict[str, Any]) -> tuple[str, str]:
     # Stem = longest meaningful word (usually the surname), accent-stripped.
     words = [w for w in re.findall(r"[A-Za-zÀ-ÿ]+", subject) if len(w) >= 4]
     stem = _strip_accents_lower(max(words, key=len)) if words else ""
-    query = subject if ("football" in subject.lower() or "futebol" in subject.lower()) else f"{subject} football"
+    # Bias the search toward real match footage (goals/skills) so we don't pull
+    # talk shows or cartoons.
+    query = f"{subject} gols dribles melhores momentos"
     return query, stem
 
 

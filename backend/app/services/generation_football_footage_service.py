@@ -98,8 +98,10 @@ def _download_sources(query: str, count: int, max_duration: int, subject_stem: s
 
     def _run(filter_expr: str) -> list[Path]:
         opts = {
-            # Progressive mp4 so no merge step is needed; cap height for size/speed.
-            "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
+            # Prefer a higher-res VIDEO-ONLY mp4 (up to 720p) — the render drops
+            # audio anyway, so no merge/audio is needed and quality goes up vs the
+            # 360p progressive-only stream. Falls back to progressive/best.
+            "format": "bestvideo[ext=mp4][height<=720]/bestvideo[height<=720]/best[ext=mp4][height<=720]/best",
             "outtmpl": str(SOURCES_DIR / "%(id)s.%(ext)s"),
             "noplaylist": True,
             "ignoreerrors": True,
@@ -138,10 +140,14 @@ def _download_sources(query: str, count: int, max_duration: int, subject_stem: s
                 break
         return paths
 
-    # Prefer short clips whose TITLE mentions the player (much more likely to be
-    # actually that player, not a mixed team compilation). Fall back to a generic
-    # short-clip search if the title filter finds nothing.
-    base = f"duration > 5 & duration < {int(max_duration)}"
+    # Exclude cartoons/animations/parodies (a title match on the player name also
+    # hits animated series), and prefer short clips whose TITLE mentions the player
+    # (more likely to be actually that player, not a mixed compilation). Fall back
+    # to a generic short-clip search if the title filter finds nothing.
+    base = (
+        f"duration > 5 & duration < {int(max_duration)} "
+        "& title !~= '(?i)(desenho|cartoon|cartum|anima|parodia|paródia|emoji|minecraft|fifa|efootball|pes20)'"
+    )
     stem = re.sub(r"[^a-z]", "", (subject_stem or "").lower())[:6]
     if stem:
         paths = _run(f"{base} & title ~= '(?i){stem}'")
