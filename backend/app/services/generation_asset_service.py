@@ -293,31 +293,45 @@ def _football_mode(project: dict[str, Any]) -> bool:
     return str(project.get("footage_source") or "").strip().lower() == "football"
 
 
-def _football_query(project: dict[str, Any]) -> str:
+def _football_query(project: dict[str, Any]) -> tuple[str, str]:
     """One query per video — the main subject (player/team) — so every item pulls
-    from the same downloaded sources (coherent, cache-friendly)."""
+    from the same downloaded sources (coherent, cache-friendly). Returns
+    (query, subject_stem) where the stem is the player's name used to bias the
+    YouTube search toward titles that actually mention them."""
     brief = project.get("research_brief") if isinstance(project.get("research_brief"), dict) else {}
     entities = brief.get("key_entities") or []
+    subject = ""
     for cand in (brief.get("subject"), entities[0] if entities else None, project.get("title"), project.get("idea")):
         s = str(cand or "").strip()
         if s:
-            return f"{s} football" if "football" not in s.lower() and "futebol" not in s.lower() else s
-    return "football highlights"
+            subject = s
+            break
+    if not subject:
+        return "football highlights", ""
+    # Stem = longest meaningful word (usually the surname), accent-stripped.
+    words = [w for w in re.findall(r"[A-Za-zÀ-ÿ]+", subject) if len(w) >= 4]
+    stem = _strip_accents_lower(max(words, key=len)) if words else ""
+    query = subject if ("football" in subject.lower() or "futebol" in subject.lower()) else f"{subject} football"
+    return query, stem
 
 
 def _try_football(item: dict[str, Any], project: dict[str, Any], used_ids: set[str]) -> bool:
-    query = _football_query(project)
+    query, stem = _football_query(project)
     try:
-        results = search_football_clips(query, want=8)
+        results = search_football_clips(query, want=14, subject_stem=stem)
     except Exception:
         results = []
+    if not results:
+        return False
+    # Prefer a fresh (unused) clip; if all are used, REUSE the best one so every
+    # segment stays real football footage instead of falling back to a stock/AI
+    # image that breaks the football look.
+    fresh = [r for r in results if str(r.get("media_id") or "") not in used_ids]
+    pool = fresh or results
     best: dict[str, Any] | None = None
     best_score = -1.0
     best_reason = ""
-    for result in results:
-        media_id = str(result.get("media_id") or "")
-        if media_id and media_id in used_ids:
-            continue
+    for result in pool:
         score, reason = _score(result, query)
         if score > best_score:
             best, best_score, best_reason = result, score, reason

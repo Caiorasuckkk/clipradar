@@ -59,12 +59,17 @@ def _key(text: str) -> str:
 
 def search_football_clips(
     query: str,
-    want: int = 6,
+    want: int = 12,
     seg_seconds: float = 5.0,
-    max_sources: int = 2,
-    max_source_duration: int = 300,
+    max_sources: int = 4,
+    max_source_duration: int = 150,
+    subject_stem: str = "",
 ) -> list[dict[str, Any]]:
-    """Return up to `want` local clip results for `query`. Cached per query."""
+    """Return up to `want` local clip results for `query`. Cached per query.
+
+    `subject_stem` (e.g. "mbapp") biases the YouTube search to videos whose TITLE
+    mentions the player, so we segment clips actually about the subject instead of
+    generic team compilations."""
     query = (query or "").strip()
     if not query:
         return []
@@ -73,7 +78,7 @@ def search_football_clips(
     if cached:
         return cached[:want]
 
-    sources = _download_sources(query, max_sources, max_source_duration)
+    sources = _download_sources(query, max_sources, max_source_duration, subject_stem)
     if not sources:
         return []
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -84,48 +89,65 @@ def search_football_clips(
     return _clip_results(out_dir, query)[:want]
 
 
-def _download_sources(query: str, count: int, max_duration: int) -> list[Path]:
+def _download_sources(query: str, count: int, max_duration: int, subject_stem: str = "") -> list[Path]:
     try:
         import yt_dlp
     except Exception:
         return []
     SOURCES_DIR.mkdir(parents=True, exist_ok=True)
-    opts = {
-        # Progressive mp4 so no merge step is needed; cap height for size/speed.
-        "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
-        "outtmpl": str(SOURCES_DIR / "%(id)s.%(ext)s"),
-        "noplaylist": True,
-        "ignoreerrors": True,
-        "quiet": True,
-        "no_warnings": True,
-        "ffmpeg_location": _ffmpeg_dir_for_ytdlp(),
-        "match_filter": yt_dlp.utils.match_filter_func(
-            f"duration < {int(max_duration)} & duration > 5"
-        ),
-    }
-    # Search a few extra to survive filtered/failed entries.
-    search = f"ytsearch{max(count * 3, count)}:{query}"
-    paths: list[Path] = []
-    seen: set[str] = set()
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(search, download=True)
-    except Exception:
-        return []
-    entries = (info or {}).get("entries") or ([info] if info else [])
-    for entry in entries:
-        if not entry:
-            continue
-        vid = str(entry.get("id") or "")
-        if not vid or vid in seen:
-            continue
-        candidate = SOURCES_DIR / f"{vid}{_VIDEO_EXT}"
-        if candidate.exists() and candidate.stat().st_size > 4096:
-            seen.add(vid)
-            paths.append(candidate)
-        if len(paths) >= count:
-            break
-    return paths
+
+    def _run(filter_expr: str) -> list[Path]:
+        opts = {
+            # Progressive mp4 so no merge step is needed; cap height for size/speed.
+            "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
+            "outtmpl": str(SOURCES_DIR / "%(id)s.%(ext)s"),
+            "noplaylist": True,
+            "ignoreerrors": True,
+            "quiet": True,
+            "no_warnings": True,
+            "ffmpeg_location": _ffmpeg_dir_for_ytdlp(),
+            "match_filter": yt_dlp.utils.match_filter_func(filter_expr),
+            # Without a JS runtime (deno), the default web client often returns
+            # 403 on the progressive format URLs. The android/ios clients still
+            # hand out a usable stream, so prefer them.
+            "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
+            "retries": 3,
+            "fragment_retries": 3,
+        }
+        # Search extra candidates so the title filter has room to reject mismatches.
+        search = f"ytsearch{max(count * 4, count)}:{query}"
+        paths: list[Path] = []
+        seen: set[str] = set()
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(search, download=True)
+        except Exception:
+            return []
+        entries = (info or {}).get("entries") or ([info] if info else [])
+        for entry in entries:
+            if not entry:
+                continue
+            vid = str(entry.get("id") or "")
+            if not vid or vid in seen:
+                continue
+            candidate = SOURCES_DIR / f"{vid}{_VIDEO_EXT}"
+            if candidate.exists() and candidate.stat().st_size > 4096:
+                seen.add(vid)
+                paths.append(candidate)
+            if len(paths) >= count:
+                break
+        return paths
+
+    # Prefer short clips whose TITLE mentions the player (much more likely to be
+    # actually that player, not a mixed team compilation). Fall back to a generic
+    # short-clip search if the title filter finds nothing.
+    base = f"duration > 5 & duration < {int(max_duration)}"
+    stem = re.sub(r"[^a-z]", "", (subject_stem or "").lower())[:6]
+    if stem:
+        paths = _run(f"{base} & title ~= '(?i){stem}'")
+        if paths:
+            return paths
+    return _run(base)
 
 
 def _segment(src: Path, out_dir: Path, seg_seconds: float) -> list[Path]:
