@@ -351,6 +351,9 @@ def _normalize_project(payload: dict[str, Any]) -> dict[str, Any]:
         # Footage source for the asset pipeline: "football" routes b-roll to
         # real football clips (yt-dlp) instead of stock. Empty = default stock.
         "footage_source": _clean(payload.get("footage_source")),
+        # Big editorial headlines overlaid on the video (the NO RESPECT / ISSO DIZ
+        # TUDO punch text). Generated for football-mode projects.
+        "headlines": _string_list(payload.get("headlines")),
         "posted_platform": _clean(payload.get("posted_platform")),
         "posted_url": _clean(payload.get("posted_url")),
         "posted_video_id": _clean(payload.get("posted_video_id")),

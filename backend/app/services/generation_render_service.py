@@ -30,6 +30,7 @@ from app.services.generation_workspace_service import get_project, update_projec
 from app.services.generation_voice_service import ensure_voice_words
 from app.services.generation_asset_service import acquire_assets, has_media, usable_items
 from app.services import generation_caption_service
+from app.services.generation_headline_service import generate_headlines
 
 
 JOB_TYPE = "generation_render"
@@ -149,6 +150,17 @@ def prepare_render(
                     "voice_caption_count": caption_result["caption_count"],
                 },
             ) or project
+
+    # 1b. Football mode: big editorial headlines (NO RESPECT / ISSO DIZ TUDO),
+    # generated once and overlaid by the render.
+    if str(project.get("footage_source") or "").lower() == "football" and not project.get("headlines"):
+        try:
+            heads = generate_headlines(project)
+        except Exception:
+            heads = []
+        if heads:
+            project = update_project(project_id, {**project, "headlines": heads}) or project
+            fixed.append("headlines_generated")
 
     # 2. Acquire visual assets (download Pexels; optionally enable fallback).
     acq = acquire_assets(project, allow_fallback=allow_visual_fallback)
@@ -674,10 +686,27 @@ def _build_subtitles(project: dict[str, Any], work_dir: Path, total: float) -> t
     cues = generation_caption_service.validate_and_fix(cues, total)
     ass_path = work_dir / "subs.ass"
     try:
-        _write_ass(ass_path, cues)
+        _write_ass(ass_path, cues, _headline_cues(project, total))
     except OSError:
         return None, cues, source
     return ass_path, cues, source
+
+
+def _headline_cues(project: dict[str, Any], total: float) -> list[dict[str, Any]]:
+    """Spread the project's big headlines evenly across the video, each shown for
+    roughly its slice (with small gaps), in the upper third."""
+    heads = [str(h).strip() for h in (project.get("headlines") or []) if str(h).strip()]
+    if not heads or total <= 0:
+        return []
+    slot = total / len(heads)
+    cues: list[dict[str, Any]] = []
+    for index, head in enumerate(heads):
+        start = round(index * slot + min(0.3, slot * 0.1), 2)
+        end = round((index + 1) * slot - min(0.5, slot * 0.15), 2)
+        if end <= start:
+            end = round(min((index + 1) * slot, total), 2)
+        cues.append({"start": start, "end": end, "text": head})
+    return cues
 
 
 def _cues_from_captions(project: dict[str, Any]) -> list[dict[str, Any]]:
@@ -760,12 +789,16 @@ def _cues_from_lines(project: dict[str, Any], total: float) -> list[dict[str, An
     return cues
 
 
-def _write_ass(path: Path, cues: list[dict[str, Any]]) -> None:
+def _write_ass(path: Path, cues: list[dict[str, Any]], headlines: list[dict[str, Any]] | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     font = config.GENERATION_CAPTION_FONT or "Arial"
     size = max(40, int(config.GENERATION_CAPTION_FONTSIZE))
     margin_v = int(HEIGHT * 0.20)  # lower third, inside the safe area
     upper = config.GENERATION_CAPTION_UPPERCASE
+    # Headline overlay (the big NO RESPECT / ISSO DIZ TUDO punch text): larger,
+    # yellow, anchored to the upper third (Alignment 8 = top-center).
+    hl_size = max(72, int(size * 1.4))
+    hl_margin_v = int(HEIGHT * 0.16)
     # Big bold white text with a thick black outline + drop shadow so it stays
     # readable over any b-roll (the viral-shorts caption look).
     header = [
@@ -778,6 +811,7 @@ def _write_ass(path: Path, cues: list[dict[str, Any]]) -> None:
         "[V4+ Styles]",
         "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
         f"Style: Default,{font},{size},&H00FFFFFF,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,1,7,4,2,70,70,{margin_v},1",
+        f"Style: Headline,{font},{hl_size},&H0000FFFF,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,1,6,3,8,60,60,{hl_margin_v},1",
         "",
         "[Events]",
         "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
@@ -797,6 +831,15 @@ def _write_ass(path: Path, cues: list[dict[str, Any]]) -> None:
                 "Dialogue: 0,"
                 f"{_ass_time(cue['start'])},{_ass_time(cue['end'])},Default,,0,0,0,,{_ass_escape(text)}"
             )
+    # Headlines on a higher layer so they sit above the word captions.
+    for cue in headlines or []:
+        text = str(cue.get("text") or "").strip()
+        if not text:
+            continue
+        body.append(
+            "Dialogue: 1,"
+            f"{_ass_time(cue['start'])},{_ass_time(cue['end'])},Headline,,0,0,0,,{_ass_escape(text.upper())}"
+        )
     path.write_text("\n".join(header + body), encoding="utf-8")
 
 
