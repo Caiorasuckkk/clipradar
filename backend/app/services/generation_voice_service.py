@@ -76,6 +76,10 @@ def generate_voice_for_project(project_id: str, voice: str, rate: str = "+0%", p
     selected_voice = voice if _valid_voice(voice) else DEFAULT_VOICES[0]["name"]
     provider, voice_id = _voice_provider(selected_voice)
     language = str(project.get("language") or "pt-BR")
+    # Expand numbers/abbreviations to words BEFORE any TTS engine so years read
+    # naturally ("1450" -> "mil quatrocentos e cinquenta", not "quatorze e
+    # cinquenta"). Applies to every provider (was only wired into XTTS before).
+    narration_text = _normalize_for_speech(narration_text, language)
     # Studio-driven voice styling: a persona may steer the OpenAI TTS tone
     # (`tts_instructions`) and request a post-processing effect (`voice_fx`),
     # e.g. the Terror studio's hoarse/raspy horror voice.
@@ -695,7 +699,6 @@ def _xtts_tts_save(
     voice_id. No native word timings (caller aligns with Whisper)."""
     import subprocess
 
-    text = _normalize_for_speech(text, language)
     python_exe = Path(config.GENERATION_XTTS_PYTHON)
     script = Path(config.GENERATION_XTTS_SCRIPT)
     ref = _xtts_ref_for(voice_id, language)
